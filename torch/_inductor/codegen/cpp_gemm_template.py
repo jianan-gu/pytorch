@@ -650,6 +650,7 @@ class CppPackedGemmTemplate(CppTemplate):
             alpha=alpha,
             num_threads=num_threads,
         )
+
         assert micro_gemm is not None
         _, block_n, _ = micro_gemm.register_blocking
         padded_n = get_padded_n(n, block_n)
@@ -869,8 +870,9 @@ class CppPackedGemmTemplate(CppTemplate):
             inp = self.input_nodes[2] if self.has_bias else None
 
         template_buffer_has_other_users = None
-
+        
         if template_buffer_node is not None:
+            # breakpoint()
             # Use the updated prepacked weight buffer
             W = template_buffer_node.inputs[1]
             Y = template_buffer_node

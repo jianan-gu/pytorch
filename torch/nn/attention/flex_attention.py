@@ -766,7 +766,7 @@ def create_mask(
     H: Optional[int],
     Q_LEN: int,
     KV_LEN: int,
-    device: str = "cuda",
+    device: str = "cpu",
 ) -> Tensor:
     r"""This function creates a mask tensor from a mod_fn function.
 
@@ -813,7 +813,7 @@ def create_block_mask(
     H: Optional[int],
     Q_LEN: int,
     KV_LEN: int,
-    device: str = "cuda",
+    device: str = "cpu",
     BLOCK_SIZE: Union[int, Tuple[int, int]] = _DEFAULT_SPARSE_BLOCK_SIZE,
     _compile=False,
 ) -> BlockMask:
@@ -1088,7 +1088,173 @@ def _validate_nestedness(query: Tensor, key: Tensor, value: Tensor):
             "FlexAttention does not support nested tensors that are non-contiguous with holes. "
             "Please file an issue requesting this if it is important to you."
         )
+from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
+def _construct_strides(
+    sizes: Sequence[int],
+    fill_order: Sequence[int],
+) -> Sequence[int]:
+    """From a list of sizes and a fill order, construct the strides of the permuted tensor."""
+    # Initialize strides
+    assert len(sizes) == len(
+        fill_order
+    ), "Length of sizes must match the length of the fill order"
+    strides = [0] * len(sizes)
 
+    # Start with stride 1 for the innermost dimension
+    current_stride = 1
+
+    # Iterate through the fill order populating strides
+    for dim in fill_order:
+        strides[dim] = current_stride
+        current_stride *= sizes[dim]
+
+    return strides
+def _permute_strides(out: torch.Tensor, query_strides: Tuple[int, ...]) -> torch.Tensor:
+    """
+    Create a new tensor with the same data and shape as the input,
+    but with strides permuted based on the input tensor's stride order.
+
+    Args:
+        out (torch.Tensor): The output tensor of attention.
+        query_strides (List[int]): The stride order of the input query tensor
+
+    Returns:
+        torch.Tensor: A new tensor with same shape and data as the input,
+        but with strides permuted based on the query tensor's stride order.
+    """
+    from torch._inductor.ir import get_fill_order
+
+    fill_order = get_fill_order(query_strides)
+    assert out.storage_offset() == 0, "Only support storage_offset == 0"
+    out_strides = _construct_strides(out.shape, fill_order)
+    new_out = out.new_empty(out.shape).as_strided(out.shape, out_strides)
+    new_out.copy_(out)
+    return new_out
+
+def _math_attention_inner(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    score_mod: Callable,
+    block_mask: Tuple,
+    scale: float,
+    kernel_options: Dict[str, Any],
+    score_mod_other_buffers: Tuple = (),
+    mask_mod_other_buffers: Tuple = (),
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    from torch._dynamo._trace_wrapped_higher_order_op import TransformGetItemToIndex
+
+    working_precision = torch.float64 if query.dtype == torch.float64 else torch.float32
+
+    scores = (query @ key.transpose(-2, -1)).to(dtype=working_precision)
+
+    b = torch.arange(0, scores.size(0), device=scores.device)
+    h = torch.arange(0, scores.size(1), device=scores.device)
+    m = torch.arange(0, scores.size(2), device=scores.device)
+    n = torch.arange(0, scores.size(3), device=scores.device)
+
+    captured_buffers_in_dim = (None,) * len(score_mod_other_buffers)
+    from torch.nn.attention.flex_attention import _vmap_for_bhqkv
+
+    # first input is score
+    # breakpoint()
+    score_mod = _vmap_for_bhqkv(score_mod, prefix=(0,), suffix=captured_buffers_in_dim)
+
+    mask_mod = block_mask[-1]
+    mask_mod_in_dim_buffers = (None,) * len(mask_mod_other_buffers)
+    mask_mod = _vmap_for_bhqkv(mask_mod, prefix=(), suffix=mask_mod_in_dim_buffers)
+
+    with TransformGetItemToIndex():
+        scores = (scores * scale).to(working_precision)
+        post_mod_scores = torch.where(
+            mask_mod(b, h, m, n, *mask_mod_other_buffers),
+            score_mod(scores, b, h, m, n, *score_mod_other_buffers),
+            torch.tensor(-float("inf"), dtype=working_precision, device=scores.device),
+        )
+
+    return scores, post_mod_scores
+
+def _math_attention(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    score_mod: Callable,
+    block_mask: Tuple,
+    scale: float,
+    kernel_options: Dict[str, Any],
+    score_mod_other_buffers: Tuple = (),
+    mask_mod_other_buffers: Tuple = (),
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Eager implementation
+
+    This implementation uses vmap to vectorize the score_mod function over the batch, head, m, and n dimensions.
+    We then apply the vectorized score_mod function to the scores matrix. Each wrap of vmap applies one of the
+    batch, head, m, or n dimensions. We need to apply vmap 4 times to vectorized over all 4 dimensions.
+
+    Args:
+        query: The query tensor
+        key: The key tensor
+        value: The value tensor
+        score_mod: The score_mod function
+        other_buffers: Other buffers that are passed to the score_mod function
+    """
+    # broadcast query & key along head dim for GQA
+    G = query.size(1) // key.size(1)
+    value = torch.repeat_interleave(value, G, dim=1)
+    key = torch.repeat_interleave(key, G, dim=1)
+
+    Bq, Bkv = query.size(0), key.size(0)
+    if not ((Bq == Bkv) or (Bq > 1 and Bkv == 1)):
+        raise RuntimeError(f"Bq and Bkv must broadcast. Got Bq={Bq} and Bkv={Bkv}")
+
+    key = key.expand((Bq, *key.size()[1:]))
+    value = value.expand((Bq, *value.size()[1:]))
+
+    _, post_mod_scores = _math_attention_inner(
+        query,
+        key,
+        value,
+        score_mod,
+        block_mask,
+        scale,
+        kernel_options,
+        score_mod_other_buffers,
+        mask_mod_other_buffers,
+    )
+
+    # Set fully masked rows' sumexp to 0.0
+    logsumexp = post_mod_scores.logsumexp(dim=-1)
+    masked_rows = torch.all(post_mod_scores == -float("inf"), dim=-1)
+    logsumexp = torch.where(masked_rows, -float("inf"), logsumexp)
+
+    post_mod_scores = torch._safe_softmax(post_mod_scores, dim=-1)
+
+    return post_mod_scores.to(query.dtype) @ value, logsumexp / math.log(2)
+# @torch.compile
+def _sdpa_dense(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    score_mod: Callable,
+    block_mask: Tuple,
+    scale: float,
+    kernel_options: Dict[str, Any],
+    score_mod_other_buffers: Tuple = (),
+    mask_mod_other_buffers: Tuple = (),
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    out, lse = _math_attention(
+        query,
+        key,
+        value,
+        score_mod,
+        block_mask,
+        scale,
+        kernel_options,
+        score_mod_other_buffers,
+        mask_mod_other_buffers,
+    )
+    out = _permute_strides(out, query.stride())
+    return out, lse
 
 def flex_attention(
     query: Tensor,
@@ -1156,7 +1322,7 @@ def flex_attention(
     # Some basic input validation
     _validate_sdpa_input(query, key, value)
     _validate_embed_dim(query, key, value)
-    _validate_device(query, key, value)
+    # _validate_device(query, key, value)
     _validate_nestedness(query, key, value)
     if query.dim() != 4 or key.dim() != 4 or value.dim() != 4:
         raise NotImplementedError("NYI: query, key, and value must be 4D tensors")
@@ -1221,6 +1387,7 @@ def flex_attention(
             f"block_mask of shape {block_mask.shape} is not compatible with nested tensor input "
             f"with total sequence length of {query._values.size(query._ragged_idx - 1)}"  # type: ignore[attr-defined]
         )
+    
     if scale is None:
         scale = 1.0 / math.sqrt(query.size(-1))
 
@@ -1237,7 +1404,7 @@ def flex_attention(
         return_lse,
         kernel_options,
     )
-
+    # breakpoint()
     if torch.compiler.is_dynamo_compiling():
         # mark head_dim and number of heads to be static
         for x in [query, key, value]:
@@ -1251,10 +1418,10 @@ def flex_attention(
             return out, lse * math.log(2)
         else:
             return out
-
+    # breakpoint()
     if not torch._dynamo.is_dynamo_supported():
         raise RuntimeError("flex_attention requires dynamo support")
-
+    # breakpoint()
     from torch._dynamo.backends.debugging import (
         make_eager_backend_with_torch_function_mode,
     )
@@ -1264,28 +1431,38 @@ def flex_attention(
     def _flex_attention_hop_wrapper(*args, **kwargs):
         return flex_attention_hop(*args, **kwargs)
 
-    with _set_compilation_env():
-        with torch._dynamo.utils.disable_cache_limit():
-            with _temp_remove_pre_dispatch_torch_function_mode():
-                with _temp_remove_metadata_torch_function_mode() as metadata_mode:
-                    if metadata_mode:
-                        backend = make_eager_backend_with_torch_function_mode(
-                            metadata_mode
-                        )
-                    else:
-                        backend = "eager"
-                    out, lse = torch.compile(
-                        _flex_attention_hop_wrapper, backend=backend, fullgraph=True
-                    )(
-                        query,
-                        key,
-                        value,
-                        score_mod,
-                        block_mask.as_tuple(),  # type: ignore[union-attr]
-                        scale,
-                        kernel_options,
-                    )
-                    if return_lse:
-                        return out, lse * math.log(2)
-                    else:
-                        return out
+    # with _set_compilation_env():
+    #     with torch._dynamo.utils.disable_cache_limit():
+    #         with _temp_remove_pre_dispatch_torch_function_mode():
+    #             with _temp_remove_metadata_torch_function_mode() as metadata_mode:
+    #                 if metadata_mode:
+    #                     backend = make_eager_backend_with_torch_function_mode(
+    #                         metadata_mode
+    #                     )
+    #                 else:
+    #                     backend = "eager"
+    out, lse = _sdpa_dense(
+        query,
+        key,
+        value,
+        score_mod,
+        block_mask.as_tuple(),  # type: ignore[union-attr]
+        scale,
+        kernel_options,
+    )
+                    # out, lse = torch.compile(
+                    #     _flex_attention_hop_wrapper, backend=backend, fullgraph=True
+                    # )(
+                    #     query,
+                    #     key,
+                    #     value,
+                    #     score_mod,
+                    #     block_mask.as_tuple(),  # type: ignore[union-attr]
+                    #     scale,
+                    #     kernel_options,
+                    # )
+                    # breakpoint()
+    if return_lse:
+        return out, lse * math.log(2)
+    else:
+        return out

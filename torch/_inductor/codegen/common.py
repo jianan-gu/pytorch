@@ -1364,6 +1364,7 @@ class KernelArgs:
         self.workspace_args = []
 
     def __repr__(self):
+        print("gjn2----__repr__-----", self.output_buffers)
         return "KernelArgs({})".format(
             ", ".join(
                 map(
@@ -1382,6 +1383,7 @@ class KernelArgs:
         return isinstance(name, str) and name.startswith("REMOVED")
 
     def input(self, name):
+        print("gjn2---------", self.output_buffers)
         if V.graph.scheduler:
             name = V.graph.scheduler.mutation_real_name.get(name, name)
         assert name not in V.graph.removed_buffers, name
@@ -1394,6 +1396,7 @@ class KernelArgs:
         return self._lookup("in_ptr", self.input_buffers, name)
 
     def output(self, name):
+        print("gjn---------", self.output_buffers)
         if V.graph.scheduler:
             name = V.graph.scheduler.mutation_real_name.get(name, name)
         assert name not in V.graph.removed_buffers, name
@@ -1535,9 +1538,11 @@ class KernelArgs:
             arg_defs.append(f"const {cpp_dtype}* {inner}")
             call_args.append(self.wrap_ptr_arg(outer, dtype))
             arg_types.append(f"const {cpp_dtype}*")
+        # breakpoint()
         for outer, inner in self.output_buffers.items():
             if outer in self.inplace_buffers or self._buffer_is_marked_removed(inner):
                 continue
+            # breakpoint()
             dtype = V.graph.get_dtype(outer)
             cpp_dtype = DTYPE_TO_CPP[dtype]
             arg_defs.append(f"{cpp_dtype}* {inner}")

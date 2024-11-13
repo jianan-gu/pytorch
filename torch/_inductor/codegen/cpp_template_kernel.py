@@ -57,6 +57,7 @@ class CppTemplateKernel(CppKernel):
         outputs: Dict[str, ir.Buffer],
         aliases: Optional[Dict[str, str]] = None,
     ) -> str:
+        # breakpoint()
         for name, inp in inputs.items():
             if inp is not None:
                 self.args.input_buffers[inp.get_name()] = name
