@@ -744,22 +744,8 @@ def flex_attention(
         [B, Hq, seq_len_q, v_head_dim],
         stride=out_strides,
     )
-    # key_ = permute(key, [0, 1, 3, 2])
-    # res = query
-    # copy_(res, query)
-    # breakpoint()
+
     choices: List[Any] = []
-    # for i in range(Bq):
-    #     for j in range(Hq):
-    #           q_ = select(select(query, 0, i), 0, j)
-              
-    #           k_ = select(select(key_, 0, i), 0, j)
-    #         #   breakpoint()
-    #           v_ = select(select(value, 0, i), 0, j)
-    #           attn_wei = tuned_mm(q_, k_ )
-    #           temp =  select(select(res, 0, i), 0, j)
-    #           copy_(temp, tuned_mm(attn_wei, v_))
-    # return res
 
     CppMHATemplate.add_choices(
         choices=choices,
@@ -767,29 +753,17 @@ def flex_attention(
             query,
             key,
             value,
-            # res,
-            # subgraph,
-            # block_mask,
-            # scale,
-            # kernel_options,
-            # score_mod_other_buffers,
-            # mask_mod_other_buffers,
         ],
         layout=layout,
-        scale=scale,)
+        scale=scale,
+        score_mod=subgraph,
+        block_mask=block_mask)
 
     inputs_for_autotuning = (
         [
             query,
             key,
             value,
-            # res,
-            # subgraph,
-            # block_mask,
-            # scale,
-            # kernel_options,
-            # score_mod_other_buffers,
-            # mask_mod_other_buffers,
         ]
     )
 
@@ -800,9 +774,9 @@ def flex_attention(
         inputs_for_autotuning,
         layout,
     )
-    # breakpoint()
+
     return (res, )
-    # breakpoint()
+
     # return (query,)
 
 # # TODO: We probably also need a layout constraint?

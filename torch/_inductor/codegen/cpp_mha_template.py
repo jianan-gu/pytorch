@@ -131,7 +131,8 @@ GEMM_TEMPLATE = r"""
   std::unique_ptr<scalar_t[]> value_reorder_data;
   int kv_padding_size = (kvSize - 1) / kvSplitSize * ekvSplitSize + ekvTail;
 
-
+  auto kkk = {{template.apply_score_mod(1,1,4,123,123)}};
+  std::cout<<"gjngjn"<<kkk<<std::endl;
   at::parallel_for(0, batchSize * num_head * qSlice, 1, [&](int64_t begin, int64_t end) {
      int64_t i = 0, j = 0, k = 0;
      at::native::data_index_init(begin, i, batchSize, j, num_head, k, qSlice);
@@ -336,6 +337,8 @@ class CppMHATemplate(CppTemplate):
         input_nodes,
         layout: ir.Layout,
         scale,
+        score_mod,
+        block_mask
     ) -> None:
         assert layout.dtype in [torch.float, torch.bfloat16, torch.half, torch.uint8]
         super().__init__(
@@ -345,12 +348,16 @@ class CppMHATemplate(CppTemplate):
             1
         )
         self.scale = scale
+        self.score_mod = score_mod
+        self.block_mask = block_mask
     @staticmethod
     def add_choices(
         choices,
         input_nodes,
         layout,
         scale,
+        score_mod,
+        block_mask
     ):
         def preprocessor(input_nodes, layout):
             return input_nodes, layout
@@ -363,11 +370,15 @@ class CppMHATemplate(CppTemplate):
             postprocessor,
             input_nodes=input_nodes,
             layout=layout,
-            scale= scale
+            scale= scale,
+            score_mod=score_mod,
+            block_mask=block_mask
         )
         template.maybe_append_choice(choices)
         return template
-
+    def apply_score_mod(self, score, b, h, q_idx, kv_idx):
+        breakpoint()
+        return self.score_mod.graph_module(score, b, h, q_idx, kv_idx).item()
     def render(  # type: ignore[override,return]
         self,
         kernel,
@@ -379,7 +390,6 @@ class CppMHATemplate(CppTemplate):
         query = kernel.permute(self.input_nodes[0], [0,2,1,3])
         key = kernel.permute(self.input_nodes[1], [0,2,1,3])
         value = kernel.permute(self.input_nodes[2], [0,2,1,3])
-
         q_split_size = 32
         kv_split_size = 512
         batchSize = query.layout.size[0]

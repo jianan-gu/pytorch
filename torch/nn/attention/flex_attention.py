@@ -654,6 +654,7 @@ def _convert_mask_to_block_mask(
     KV_BLOCK_SIZE=_DEFAULT_SPARSE_BLOCK_SIZE,
     separate_full_blocks: bool = False,
 ) -> Tuple[Tensor, Optional[Tensor]]:
+    breakpoint()
     assert mask.dtype == torch.bool
     mask = _broadcast_to_dim(mask, 4)
 
@@ -869,7 +870,7 @@ def create_block_mask(
         return torch.compile(create_block_mask)(
             mask_mod, B, H, Q_LEN, KV_LEN, device, BLOCK_SIZE
         )
-
+    breakpoint()
     mask_tensor = create_mask(mask_mod, B, H, Q_LEN, KV_LEN, device)
     partial_block_mask, full_block_mask = _convert_mask_to_block_mask(
         mask_tensor,
@@ -877,9 +878,11 @@ def create_block_mask(
         KV_BLOCK_SIZE=KV_BLOCK_SIZE,
         separate_full_blocks=True,
     )
+    breakpoint()
     block_mask = _create_sparse_block_from_block_mask(
         (partial_block_mask, full_block_mask), mask_mod, Q_BLOCK_SIZE, KV_BLOCK_SIZE
     )
+    breakpoint()
     return block_mask
 
 
