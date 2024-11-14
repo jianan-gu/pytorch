@@ -31,8 +31,15 @@ from .cpp_utils import (
     GemmBlocking,
     get_gemm_template_output_and_compute_dtype,
 )
-
-
+from collections import namedtuple
+SubgraphInfo = namedtuple(
+    "SubgraphInfo",
+    [
+        "body",
+        "template_mask",
+        "template_out",
+    ],
+)
 log = logging.getLogger(__name__)
 
 GEMM_TEMPLATE = r"""
@@ -43,11 +50,9 @@ GEMM_TEMPLATE = r"""
 {{kernel.def_kernel(inputs=kernel_args, outputs={"output": output})}}
 {
 
-  // scale
   using scalar_t = {{kernel.dtype(query)}};
-  auto is_causal = false;
-  int64_t q_split_size = 32;
-  int64_t kv_split_size = 512 ;
+  int64_t q_split_size = q_split_size;
+  int64_t kv_split_size = kv_split_size;
   constexpr bool is_reduced_type = std::is_reduced_floating_point_v<scalar_t>;
   using accum_t = at::opmath_type<{{kernel.dtype(query)}}>;
   using Vec = at::vec::Vectorized<accum_t>;
@@ -59,7 +64,6 @@ GEMM_TEMPLATE = r"""
   int64_t num_head = {{kernel.size(query, 2)}};
   int64_t headSize = {{kernel.size(query, 3)}};
 
-  bool has_attn_mask = false;
   // Strides
   int64_t qStrideB = {{kernel.stride(query, 0)}};
   int64_t qStrideM = {{kernel.stride(query, 1)}};
@@ -73,25 +77,12 @@ GEMM_TEMPLATE = r"""
   int64_t oStrideB = {{kernel.stride(output, 0)}};
   int64_t oStrideM = {{kernel.stride(output, 1)}};
   int64_t oStrideH = {{kernel.stride(output, 2)}};
-  int64_t mStrideB = 0;
-  int64_t mStrideH = 0;
-  int64_t mStrideM = 0;
-  int64_t mStrideN = 0;
 
   int64_t qSplitSize = q_split_size > qSize ? qSize : q_split_size;
   int64_t kvSplitSize = kv_split_size > kvSize ? kvSize : kv_split_size;
   int64_t qSlice = (qSize + qSplitSize - 1) / qSplitSize;
   int64_t kvSlice = (kvSize + kvSplitSize - 1) / kvSplitSize;
   int64_t kvTail = (kvSize - 1) % kvSplitSize + 1;
-
-
- // const auto dtype = query.layout.dtype;
- // const auto accumulate_dtype = torch.float32; //{{kernel.acc_dtype(query)}}; //toOpMathType(dtype);
-
-  // Whether pack is needed
-  bool need_pack = false;
-  // Block size of packing B matrix
-  int64_t packb_size = 64;
 
   int64_t rHeadSize = headSize;
   int64_t rkvSplitSize = kvSplitSize;
@@ -108,18 +99,19 @@ GEMM_TEMPLATE = r"""
   int64_t size_per_thread = qSplitSize * rkvSplitSize + qSplitSize + qSplitSize + qSplitSize * rHeadSize;
 
   {%- set acc_buf_name = "buf" %}
-      {{ kernel.define_buffer(acc_buf_name, [num_thread, size_per_thread], dtype=accumulate_dtype)}}
+      {{kernel.define_buffer(acc_buf_name, [num_thread, size_per_thread], dtype=accumulate_dtype)}}
+  {%- set acc_reduced_buf_name = "buf_reduced" %}
+      {{ kernel.define_buffer(acc_reduced_buf_name, [num_thread, qSplitSize, ekvSplitSize], dtype=reduced_dtype)}}
+  
+ const scalar_t* q_data = query;
+ const scalar_t* k_data = key;
+ const scalar_t* v_data = value;
 
-  auto q_data = query;
-  auto k_data = key;
-  auto v_data = value;
-  int64_t* mask_data = nullptr;
-  // scalar_t* out_data = output.data_ptr<scalar_t>();
-  auto out_data = output;
-
-  accum_t* buf_data = buf;//.data_ptr<accum_t>();
-  scalar_t* buf_reduced_data =  nullptr; //is_reduced_type ? buf_reduced.data_ptr<scalar_t>() :
-
+  scalar_t* out_data = output;
+  
+  accum_t* buf_data = buf;
+  scalar_t* buf_reduced_data = is_reduced_type ? buf_reduced : nullptr;
+  
   // Buffer to store padding query
   scalar_t* query_padding_ptr = nullptr;
   std::unique_ptr<scalar_t[]> query_padding_data;
@@ -131,8 +123,6 @@ GEMM_TEMPLATE = r"""
   std::unique_ptr<scalar_t[]> value_reorder_data;
   int kv_padding_size = (kvSize - 1) / kvSplitSize * ekvSplitSize + ekvTail;
 
-  auto kkk = {{template.apply_score_mod(1,1,4,123,123)}};
-  std::cout<<"gjngjn"<<kkk<<std::endl;
   at::parallel_for(0, batchSize * num_head * qSlice, 1, [&](int64_t begin, int64_t end) {
      int64_t i = 0, j = 0, k = 0;
      at::native::data_index_init(begin, i, batchSize, j, num_head, k, qSlice);
@@ -153,7 +143,7 @@ GEMM_TEMPLATE = r"""
               -std::numeric_limits<accum_t>::infinity(), qBlockSize);
           fill_stub(qk_sum_data,
               static_cast<accum_t>(0), qBlockSize);
-          int64_t num_keys = is_causal ? std::min(m + qBlockSize, kvSize) : kvSize;
+          int64_t num_keys = kvSize;
 
           for (int64_t n = 0; n < num_keys; n += kvSplitSize) {
             int64_t kvBlockSize = std::min(kvSplitSize, kvSize - n);
@@ -176,52 +166,7 @@ GEMM_TEMPLATE = r"""
               static_cast<accum_t>(0),
               qk_data,
               kvBlockSize);
-            
-            // Apply causal mask, fill unused with -inf
-            if (is_causal && num_keys - n <= kvSplitSize) {
-              for (const auto row : c10::irange(qBlockSize)) {
-                int64_t last_col = m + row - n;
-                accum_t* row_ptr = qk_data + row * rkvBlockSize;
-                fill_stub(row_ptr + last_col + 1,
-                    -std::numeric_limits<accum_t>::infinity(),
-                    kvBlockSize - last_col - 1);
-              }
-            }
-            // Update attention weights with attention mask
-            // And apply scaling factor
-            // qk <- qk * scaling + attn_mask
-            if (has_attn_mask) {
-              for (int64_t row = 0; row < qBlockSize; ++row) {
-    #if __GNUC__ == 11 && defined(__ARM_FEATURE_SVE)
-                  _scale_attn_mask_fusion_kernel(
-                    qk_data + row * rkvBlockSize,
-                    mask_data + i * mStrideB + j * mStrideH +
-                        (m + row) * mStrideM + (mStrideN == 0 ? 0 : n),
-                    kvBlockSize,
-                    qk_data + row * rkvBlockSize,
-                    scaling_factor,
-                    mStrideN == 0);
-    #else
-                  if (mStrideN == 0) {
-                    _scale_attn_mask_fusion_kernel</*is_stride_0*/ true>(
-                      qk_data + row * rkvBlockSize,
-                      mask_data + i * mStrideB + j * mStrideH +
-                          (m + row) * mStrideM,
-                      kvBlockSize,
-                      qk_data + row * rkvBlockSize,
-                      scaling_factor);
-                  } else {
-                    _scale_attn_mask_fusion_kernel</*is_stride_0*/ false>(
-                      qk_data + row * rkvBlockSize,
-                      mask_data + i * mStrideB + j * mStrideH +
-                          (m + row) * mStrideM + n,
-                      kvBlockSize,
-                      qk_data + row * rkvBlockSize,
-                      scaling_factor);
-                  }
-    #endif
-              }
-            }
+
             // Update coefficients with Softmax
             accum_t tmp_max = 0, tmp_sum = 0, exp_tmp = 0;
             for (int64_t row = 0; row < qBlockSize; ++row) {
@@ -300,37 +245,12 @@ GEMM_TEMPLATE = r"""
 }
 """
 
-from ..lowering import (
-    add,
-    add_needs_realized_inputs,
-    aten,
-    permute,
-    register_lowering,
-    to_dtype,
-    view,
-    select,
-    slice_,
-    empty_like,
-    copy_,
-    ones_like,
-    clone,
-)
+
 from ..ir import (
-    ComputedBuffer,
-    ExternKernel,
-    FixedLayout,
-    FlexibleLayout,
-    get_fill_order,
-    InputBuffer,
-    IRNode,
-    StorageBox,
-    Subgraph,
     TensorBox,
 )
-def get_padded_n(n, block_n):
-    return (n + block_n - 1) // block_n * block_n
-from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
-from ..kernel.mm import tuned_mm
+
+from typing import Optional
 class CppMHATemplate(CppTemplate):
     def __init__(
         self,
@@ -345,7 +265,7 @@ class CppMHATemplate(CppTemplate):
             "mha",
             input_nodes,
             layout,
-            1
+            parallel_num_threads()
         )
         self.scale = scale
         self.score_mod = score_mod
@@ -376,8 +296,9 @@ class CppMHATemplate(CppTemplate):
         )
         template.maybe_append_choice(choices)
         return template
+
     def apply_score_mod(self, score, b, h, q_idx, kv_idx):
-        breakpoint()
+
         return self.score_mod.graph_module(score, b, h, q_idx, kv_idx).item()
     def render(  # type: ignore[override,return]
         self,
@@ -392,51 +313,36 @@ class CppMHATemplate(CppTemplate):
         value = kernel.permute(self.input_nodes[2], [0,2,1,3])
         q_split_size = 32
         kv_split_size = 512
-        batchSize = query.layout.size[0]
         qSize = query.layout.size[1]
         kvSize = key.layout.size[1]
-        num_head = query.layout.size[2]
         headSize = query.layout.size[3]
-
         qSplitSize = qSize if q_split_size > qSize else q_split_size
         kvSplitSize = kvSize if kv_split_size > kvSize else kv_split_size
-        qSlice = (qSize + qSplitSize - 1) / qSplitSize
-        kvSlice = (kvSize + kvSplitSize - 1) / kvSplitSize
-        kvTail = (kvSize - 1) % kvSplitSize + 1
         rHeadSize = headSize
         rkvSplitSize = kvSplitSize
-        rkvTail = kvTail
-        rkvSize = rkvTail if kv_split_size > kvSize else rkvSplitSize * kvSlice + rkvTail
-
-        headSize_even = headSize % 2 == 0
-        eheadSize = headSize
         ekvSplitSize = kvSplitSize
-        ekvTail = kvTail
         size_per_thread = qSplitSize * rkvSplitSize + qSplitSize + qSplitSize + qSplitSize * rHeadSize
 
         num_threads = parallel_num_threads()
         buf_out = TensorBox.create(self.output_node)
 
-        # dtype = query.scalar_type();
-        # accumulate_dtype = toOpMathType(dtype);
 
         if template_buffer_node is not None:
             # Use the updated prepacked weight buffer
             buf_out = template_buffer_node
 
         options = dict(
-            query=query,# self.input_nodes[0],
-            key=key,#self.input_nodes[1],
-            value=value,#self.input_nodes[2],
-            scale=self.scale,#self.input_nodes[3],
+            query=query,
+            key=key,
+            value=value,
+            scale=self.scale,
             size_per_thread=size_per_thread,
-            # dtype=dtype,
             accumulate_dtype=torch.float,
-            # score_mod=self.input_nodes[3],
-            # block_mask=self.input_nodes[4],
-            # kernel_options=self.input_nodes[6],
-            # score_mod_other_buffers=self.input_nodes[7],
-            # mask_mod_other_buffers=self.input_nodes[8],
+            reduced_dtype = torch.bfloat16,
+            qSplitSize = qSplitSize,
+            ekvSplitSize = ekvSplitSize,
+            q_split_size = 32,
+            kv_split_size = 512,
             template=self,
             output = buf_out,
             kernel=kernel,

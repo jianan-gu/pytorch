@@ -654,7 +654,6 @@ def _convert_mask_to_block_mask(
     KV_BLOCK_SIZE=_DEFAULT_SPARSE_BLOCK_SIZE,
     separate_full_blocks: bool = False,
 ) -> Tuple[Tensor, Optional[Tensor]]:
-    breakpoint()
     assert mask.dtype == torch.bool
     mask = _broadcast_to_dim(mask, 4)
 
@@ -870,7 +869,7 @@ def create_block_mask(
         return torch.compile(create_block_mask)(
             mask_mod, B, H, Q_LEN, KV_LEN, device, BLOCK_SIZE
         )
-    breakpoint()
+
     mask_tensor = create_mask(mask_mod, B, H, Q_LEN, KV_LEN, device)
     partial_block_mask, full_block_mask = _convert_mask_to_block_mask(
         mask_tensor,
@@ -878,11 +877,11 @@ def create_block_mask(
         KV_BLOCK_SIZE=KV_BLOCK_SIZE,
         separate_full_blocks=True,
     )
-    breakpoint()
+
     block_mask = _create_sparse_block_from_block_mask(
         (partial_block_mask, full_block_mask), mask_mod, Q_BLOCK_SIZE, KV_BLOCK_SIZE
     )
-    breakpoint()
+
     return block_mask
 
 
@@ -1160,7 +1159,6 @@ def _math_attention_inner(
     from torch.nn.attention.flex_attention import _vmap_for_bhqkv
 
     # first input is score
-    # breakpoint()
     score_mod = _vmap_for_bhqkv(score_mod, prefix=(0,), suffix=captured_buffers_in_dim)
 
     mask_mod = block_mask[-1]
@@ -1256,6 +1254,7 @@ def _sdpa_dense(
         score_mod_other_buffers,
         mask_mod_other_buffers,
     )
+
     out = _permute_strides(out, query.stride())
     return out, lse
 
@@ -1407,7 +1406,7 @@ def flex_attention(
         return_lse,
         kernel_options,
     )
-    # breakpoint()
+
     if torch.compiler.is_dynamo_compiling():
         # mark head_dim and number of heads to be static
         for x in [query, key, value]:
@@ -1421,10 +1420,10 @@ def flex_attention(
             return out, lse * math.log(2)
         else:
             return out
-    # breakpoint()
+
     if not torch._dynamo.is_dynamo_supported():
         raise RuntimeError("flex_attention requires dynamo support")
-    # breakpoint()
+
     from torch._dynamo.backends.debugging import (
         make_eager_backend_with_torch_function_mode,
     )
@@ -1464,7 +1463,7 @@ def flex_attention(
                     #     scale,
                     #     kernel_options,
                     # )
-                    # breakpoint()
+
     if return_lse:
         return out, lse * math.log(2)
     else:
