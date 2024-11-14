@@ -51,8 +51,8 @@ GEMM_TEMPLATE = r"""
 {
 
   using scalar_t = {{kernel.dtype(query)}};
-  int64_t q_split_size = q_split_size;
-  int64_t kv_split_size = kv_split_size;
+  int64_t q_split_size = {{q_split_size}};
+  int64_t kv_split_size = {{kv_split_size}};
   constexpr bool is_reduced_type = std::is_reduced_floating_point_v<scalar_t>;
   using accum_t = at::opmath_type<{{kernel.dtype(query)}}>;
   using Vec = at::vec::Vectorized<accum_t>;
@@ -75,8 +75,8 @@ GEMM_TEMPLATE = r"""
   int64_t vStrideN = {{kernel.stride(value, 1)}};
   int64_t vStrideH = {{kernel.stride(value, 2)}};
   int64_t oStrideB = {{kernel.stride(output, 0)}};
-  int64_t oStrideM = {{kernel.stride(output, 1)}};
-  int64_t oStrideH = {{kernel.stride(output, 2)}};
+  int64_t oStrideM = {{kernel.stride(output, 2)}};
+  int64_t oStrideH = {{kernel.stride(output, 1)}};
 
   int64_t qSplitSize = q_split_size > qSize ? qSize : q_split_size;
   int64_t kvSplitSize = kv_split_size > kvSize ? kvSize : kv_split_size;
@@ -100,9 +100,10 @@ GEMM_TEMPLATE = r"""
 
   {%- set acc_buf_name = "buf" %}
       {{kernel.define_buffer(acc_buf_name, [num_thread, size_per_thread], dtype=accumulate_dtype)}}
-  {%- set acc_reduced_buf_name = "buf_reduced" %}
-      {{ kernel.define_buffer(acc_reduced_buf_name, [num_thread, qSplitSize, ekvSplitSize], dtype=reduced_dtype)}}
   
+  {%- set acc_reduced_buf_name = "buf_reduced" %}
+      {{ kernel.define_buffer(acc_reduced_buf_name, [num_thread, qSplitSize, ekvSplitSize], dtype=query_dtype)}}
+
  const scalar_t* q_data = query;
  const scalar_t* k_data = key;
  const scalar_t* v_data = value;
@@ -311,8 +312,8 @@ class CppMHATemplate(CppTemplate):
         query = kernel.permute(self.input_nodes[0], [0,2,1,3])
         key = kernel.permute(self.input_nodes[1], [0,2,1,3])
         value = kernel.permute(self.input_nodes[2], [0,2,1,3])
-        q_split_size = 32
-        kv_split_size = 512
+        q_split_size = 16
+        kv_split_size = 16
         qSize = query.layout.size[1]
         kvSize = key.layout.size[1]
         headSize = query.layout.size[3]
@@ -326,7 +327,6 @@ class CppMHATemplate(CppTemplate):
         num_threads = parallel_num_threads()
         buf_out = TensorBox.create(self.output_node)
 
-
         if template_buffer_node is not None:
             # Use the updated prepacked weight buffer
             buf_out = template_buffer_node
@@ -338,11 +338,11 @@ class CppMHATemplate(CppTemplate):
             scale=self.scale,
             size_per_thread=size_per_thread,
             accumulate_dtype=torch.float,
-            reduced_dtype = torch.bfloat16,
+            query_dtype = query.layout.dtype,
             qSplitSize = qSplitSize,
             ekvSplitSize = ekvSplitSize,
-            q_split_size = 32,
-            kv_split_size = 512,
+            q_split_size = q_split_size,
+            kv_split_size = kv_split_size,
             template=self,
             output = buf_out,
             kernel=kernel,
