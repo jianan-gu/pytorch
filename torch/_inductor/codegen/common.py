@@ -1364,7 +1364,6 @@ class KernelArgs:
         self.workspace_args = []
 
     def __repr__(self):
-        print("gjn2----__repr__-----", self.output_buffers)
         return "KernelArgs({})".format(
             ", ".join(
                 map(
@@ -1383,7 +1382,6 @@ class KernelArgs:
         return isinstance(name, str) and name.startswith("REMOVED")
 
     def input(self, name):
-        print("gjn2---------", self.output_buffers)
         if V.graph.scheduler:
             name = V.graph.scheduler.mutation_real_name.get(name, name)
         assert name not in V.graph.removed_buffers, name
@@ -1396,7 +1394,6 @@ class KernelArgs:
         return self._lookup("in_ptr", self.input_buffers, name)
 
     def output(self, name):
-        print("gjn---------", self.output_buffers)
         if V.graph.scheduler:
             name = V.graph.scheduler.mutation_real_name.get(name, name)
         assert name not in V.graph.removed_buffers, name

@@ -357,8 +357,8 @@ ATTENTION_TEMPLATE = r"""
             auto kv_block_offset = n - kv_block_num * kv_pagesize;
             // getting kv indices by [BS, 1, 1, kv_block_num]
             auto kv_logical_data = kv_indices_data + i * kviStrideB  + kv_block_num;
-            auto i_kv = is_broadcast_bs_kv ? i%bs_shards : i;
-            auto j_kv = is_broadcast_head_kv ? j%gqa_shards : j;
+            auto i_kv = is_broadcast_bs_kv ? i/bs_shards : i;
+            auto j_kv = is_broadcast_head_kv ? j/gqa_shards : j;
 
             auto k_addr = k_data + i_kv * kStrideB + j_kv * kStrideH + (*kv_logical_data * kv_pagesize + kv_block_offset)  * kStrideN;
 
