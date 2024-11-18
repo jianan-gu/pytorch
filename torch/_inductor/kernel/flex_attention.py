@@ -725,6 +725,19 @@ def flex_attention(
     score_mod_other_buffers,
     mask_mod_other_buffers,
 ):
+    (
+        kv_num_blocks,
+        kv_indices,
+        full_kv_num_blocks,
+        full_kv_indices,
+        q_num_blocks,
+        q_indices,
+        full_q_num_blocks,
+        full_q_indices,
+        SPARSE_Q_BLOCK_SIZE,
+        SPARSE_KV_BLOCK_SIZE,
+        mask_graph,
+    ) = block_mask
     score_mod_other_buffers = maybe_realize(score_mod_other_buffers)
     mask_mod_other_buffers = maybe_realize(mask_mod_other_buffers)
     # placeholder_inps = [
@@ -765,11 +778,15 @@ def flex_attention(
             query,
             key,
             value,
+            kv_indices
         ],
         layout=layout,
         scale=scale,
         score_mod=subgraph,
-        block_mask=block_mask)
+        block_mask=block_mask,
+        kv_block_size=SPARSE_KV_BLOCK_SIZE,
+        kv_num_blocks=kv_num_blocks,
+        )
 
     inputs_for_autotuning = (
         [
@@ -787,7 +804,7 @@ def flex_attention(
         layout,
     )
 
-    return (res, )
+    return (res, 1)
 
 
 # # TODO: We probably also need a layout constraint?

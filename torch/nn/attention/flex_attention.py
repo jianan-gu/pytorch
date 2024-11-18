@@ -140,7 +140,7 @@ def noop_mask(
 
 
 _DEFAULT_SPARSE_BLOCK_SIZE = 128
-_LARGE_SPARSE_BLOCK_SIZE = 1 << 30
+_LARGE_SPARSE_BLOCK_SIZE = 128 #1 << 30
 
 
 def _ordered_to_dense(num_blocks_in_row: Tensor, col_indices: Tensor):
@@ -1147,7 +1147,6 @@ def _math_attention_inner(
     from torch._dynamo._trace_wrapped_higher_order_op import TransformGetItemToIndex
 
     working_precision = torch.float64 if query.dtype == torch.float64 else torch.float32
-
     scores = (query @ key.transpose(-2, -1)).to(dtype=working_precision)
 
     b = torch.arange(0, scores.size(0), device=scores.device)
@@ -1406,7 +1405,6 @@ def flex_attention(
         return_lse,
         kernel_options,
     )
-
     if torch.compiler.is_dynamo_compiling():
         # mark head_dim and number of heads to be static
         for x in [query, key, value]:
