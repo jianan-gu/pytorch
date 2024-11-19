@@ -193,7 +193,7 @@ void copy(int64_t n, const c10::complex<float> *x, int64_t incx, c10::complex<fl
 // A Base pointer to a tensor A.
 // B Base pointer to a tensor B.
 // C Pointer to a tensor C (accumulation buffer).
-void brgemm(
+TORCH_API void brgemm(
     int64_t M,
     int64_t N,
     int64_t K,

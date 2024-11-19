@@ -1535,11 +1535,9 @@ class KernelArgs:
             arg_defs.append(f"const {cpp_dtype}* {inner}")
             call_args.append(self.wrap_ptr_arg(outer, dtype))
             arg_types.append(f"const {cpp_dtype}*")
-        # breakpoint()
         for outer, inner in self.output_buffers.items():
             if outer in self.inplace_buffers or self._buffer_is_marked_removed(inner):
                 continue
-            # breakpoint()
             dtype = V.graph.get_dtype(outer)
             cpp_dtype = DTYPE_TO_CPP[dtype]
             arg_defs.append(f"{cpp_dtype}* {inner}")

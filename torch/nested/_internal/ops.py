@@ -2255,6 +2255,7 @@ def flex_njt(
         score_mod_other_buffers=score_mod_other_buffers,
         mask_mod_other_buffers=mask_mod_other_buffers,
     )
+
     # wrap outputs as NJT
     output_njt = torch.nested.nested_tensor_from_jagged(
         output[0].transpose(1, 2).squeeze(0),

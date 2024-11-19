@@ -715,8 +715,7 @@ from torch._inductor.kernel.flex_decoding import create_flex_decoding_kernel
 
 from ..codegen.cpp_mha_template import CppMHATemplate
 
-
-# # TODO: We probably also need a layout constraint?
+# TODO: We probably also need a layout constraint?
 @register_lowering(torch.ops.higher_order.flex_attention, type_promotion_kind=None)
 def flex_attention(
     query,
