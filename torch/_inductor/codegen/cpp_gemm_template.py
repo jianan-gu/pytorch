@@ -650,7 +650,6 @@ class CppPackedGemmTemplate(CppTemplate):
             alpha=alpha,
             num_threads=num_threads,
         )
-
         assert micro_gemm is not None
         _, block_n, _ = micro_gemm.register_blocking
         padded_n = get_padded_n(n, block_n)

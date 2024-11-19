@@ -1021,7 +1021,6 @@ def flex_attention(
     )
 
 
-
 # ---------------------------- Backward HOP Implementation ----------------------------
 
 
