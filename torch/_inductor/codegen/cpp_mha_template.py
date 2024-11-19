@@ -2,15 +2,16 @@
 import contextlib
 import logging
 from typing import List, Optional
+
 import torch
 import torch.utils
+
 from .. import ir
 from ..ir import TensorBox
 from ..select_algorithm import DataProcessorTemplateWrapper
-from ..utils import (
-    parallel_num_threads,
-)
+from ..utils import parallel_num_threads
 from .cpp_template import CppTemplate
+
 
 log = logging.getLogger(__name__)
 
@@ -89,7 +90,7 @@ ATTENTION_TEMPLATE = r"""
   auto  kv_indices_data = kv_indices;
 
   scalar_t* out_data = output;
-  
+
   accum_t* buf_data = buf;
   scalar_t* buf_reduced_data = is_reduced_type ? buf_reduced : nullptr;
 
@@ -225,6 +226,7 @@ ATTENTION_TEMPLATE = r"""
 }
 """
 
+
 class CppMHATemplate(CppTemplate):
     def __init__(
         self,
@@ -234,20 +236,16 @@ class CppMHATemplate(CppTemplate):
         score_mod,
         block_mask,
         kv_block_size,
-        kv_num_blocks
+        kv_num_blocks,
     ) -> None:
         assert layout.dtype in [torch.float, torch.float16, torch.bfloat16]
-        super().__init__(
-            "mha",
-            input_nodes,
-            layout,
-            parallel_num_threads()
-        )
+        super().__init__("mha", input_nodes, layout, parallel_num_threads())
         self.scale = scale
         self.score_mod = score_mod
         self.block_mask = block_mask
         self.kv_block_size = kv_block_size
-        self.kv_num_blocks=kv_num_blocks
+        self.kv_num_blocks = kv_num_blocks
+
     @staticmethod
     def add_choices(
         choices,
@@ -257,30 +255,32 @@ class CppMHATemplate(CppTemplate):
         score_mod,
         block_mask,
         kv_block_size,
-        kv_num_blocks
+        kv_num_blocks,
     ):
         def preprocessor(input_nodes, layout):
             return input_nodes, layout
-        def postprocessor(output ):
+
+        def postprocessor(output):
             return output
+
         template = DataProcessorTemplateWrapper(
             CppMHATemplate,
             preprocessor,
             postprocessor,
             input_nodes=input_nodes,
             layout=layout,
-            scale= scale,
+            scale=scale,
             score_mod=score_mod,
             block_mask=block_mask,
             kv_block_size=kv_block_size,
-            kv_num_blocks=kv_num_blocks.layout.size[-1]
+            kv_num_blocks=kv_num_blocks.layout.size[-1],
         )
         template.maybe_append_choice(choices)
         return template
 
     def apply_score_mod(self, score, b, h, q_idx, kv_idx):
-
         return self.score_mod.graph_module(score, b, h, q_idx, kv_idx).item()
+
     def render(  # type: ignore[override,return]
         self,
         kernel,
@@ -295,19 +295,21 @@ class CppMHATemplate(CppTemplate):
         #     -> (Batch x KV_seq_len x Num_heads  x Dim_per_head)
         #  Value (Batch x Num_heads  x KV_seq_len x Dim_per_head)
         #     -> (Batch x KV_seq_len x Num_heads  x Dim_per_head)
-        query = kernel.permute(self.input_nodes[0], [0,2,1,3])
-        key = kernel.permute(self.input_nodes[1], [0,2,1,3])
-        value = kernel.permute(self.input_nodes[2], [0,2,1,3])
+        query = kernel.permute(self.input_nodes[0], [0, 2, 1, 3])
+        key = kernel.permute(self.input_nodes[1], [0, 2, 1, 3])
+        value = kernel.permute(self.input_nodes[2], [0, 2, 1, 3])
 
-        q_split_size = 16 # tuning param
+        q_split_size = 16  # tuning param
         kv_split_size = self.kv_block_size
 
         qSize = query.layout.size[1]
-        kvSize = self.kv_block_size*self.kv_num_blocks
+        kvSize = self.kv_block_size * self.kv_num_blocks
         headSize = query.layout.size[3]
-        qSplitSize = qSize if q_split_size > qSize else q_split_size
-        kvSplitSize = kvSize if kv_split_size > kvSize else kv_split_size
-        size_per_thread = qSplitSize * kvSplitSize + qSplitSize + qSplitSize + qSplitSize * headSize
+        qSplitSize = min(q_split_size, qSize)
+        kvSplitSize = min(kv_split_size, kvSize)
+        size_per_thread = (
+            qSplitSize * kvSplitSize + qSplitSize + qSplitSize + qSplitSize * headSize
+        )
         num_threads = parallel_num_threads()
 
         buf_out = TensorBox.create(self.output_node)
@@ -322,19 +324,17 @@ class CppMHATemplate(CppTemplate):
             scale=self.scale,
             size_per_thread=size_per_thread,
             accumulate_dtype=torch.float,
-            query_dtype = query.layout.dtype,
-            qSplitSize = qSplitSize,
-            ekvSplitSize = kvSplitSize,
-            q_split_size = q_split_size,
-            kv_split_size = kv_split_size,
-            kv_pagesize = self.kv_block_size,
+            query_dtype=query.layout.dtype,
+            qSplitSize=qSplitSize,
+            ekvSplitSize=kvSplitSize,
+            q_split_size=q_split_size,
+            kv_split_size=kv_split_size,
+            kv_pagesize=self.kv_block_size,
             kv_num_blocks=self.kv_num_blocks,
             template=self,
-            output = buf_out,
+            output=buf_out,
             kernel=kernel,
             num_thread=num_threads,
         )
         with contextlib.ExitStack() as stack:
             return self._template_from_string(ATTENTION_TEMPLATE).render(**options)
-
-
