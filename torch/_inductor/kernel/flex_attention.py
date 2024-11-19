@@ -572,7 +572,7 @@ flex_attention_template = TritonTemplate(
     + compute_forward_block_mn,
 )
 
-from ..codegen.cpp_mha_template import CppMHATemplate
+
 def _use_flex_decoding(query, kernel_options):
     # Decide which kernel to use, return true if use flex decoding kernel.
     return (
@@ -622,29 +622,29 @@ def _get_default_config_fwd(query) -> Tuple[int, int, int, int]:
     head_dim = query.get_size()[-1]
     default_config = None
 
-    # if head_dim <= 256 and torch.cuda.get_device_capability() >= (9, 0):  # H100
-    #     if dtype == torch.float32:
-    #         default_config = (64, 64, 4, 3)
-    #     else:
-    #         default_config = (128, 64, 4, 3)
-    #     default_config = _h100_default_config.get((dtype, head_dim), default_config)
-    # elif head_dim <= 256 and torch.cuda.get_device_capability() >= (8, 0):  # A100
-    #     if dtype == torch.float32:
-    #         default_config = (64, 64, 4, 3)
-    #     else:
-    #         default_config = (128, 64, 4, 3)
-    #     default_config = _a100_default_config.get((dtype, head_dim), default_config)
-    # elif head_dim <= 256 and torch.version.hip:
-    #     if dtype == torch.float32:
-    #         default_config = (64, 64, 4, 1)
-    #     else:
-    #         default_config = (128, 64, 8, 1)
-    #     default_config = _rocm_default_config.get((dtype, head_dim), default_config)
-    # else:  # modest hardware or extremely large head_dim
-    if dtype == torch.float32:
-        default_config = (32, 16, 4, 3)
-    else:
-        default_config = (64, 32, 4, 3)
+    if head_dim <= 256 and torch.cuda.get_device_capability() >= (9, 0):  # H100
+        if dtype == torch.float32:
+            default_config = (64, 64, 4, 3)
+        else:
+            default_config = (128, 64, 4, 3)
+        default_config = _h100_default_config.get((dtype, head_dim), default_config)
+    elif head_dim <= 256 and torch.cuda.get_device_capability() >= (8, 0):  # A100
+        if dtype == torch.float32:
+            default_config = (64, 64, 4, 3)
+        else:
+            default_config = (128, 64, 4, 3)
+        default_config = _a100_default_config.get((dtype, head_dim), default_config)
+    elif head_dim <= 256 and torch.version.hip:
+        if dtype == torch.float32:
+            default_config = (64, 64, 4, 1)
+        else:
+            default_config = (128, 64, 8, 1)
+        default_config = _rocm_default_config.get((dtype, head_dim), default_config)
+    else:  # modest hardware or extremely large head_dim
+        if dtype == torch.float32:
+            default_config = (32, 16, 4, 3)
+        else:
+            default_config = (64, 32, 4, 3)
 
     return default_config
 
@@ -653,31 +653,31 @@ def _get_default_config_bwd(query) -> Tuple[int, int, int, int]:
     head_dim = query.get_size()[-1]
     dtype = query.get_dtype()
 
-    # if dtype == torch.float32:
-    return (16, 16, 4, 1)
-    # if head_dim <= 256 and torch.version.hip:
-    #     if head_dim == 64:
-    #         return (64, 64, 4, 1)
-    #     elif head_dim == 128:
-    #         return (64, 128, 4, 1)
-    #     else:
-    #         return (64, 64, 4, 1)
-    # elif head_dim <= 256 and torch.cuda.get_device_capability() >= (9, 0):  # H100
-    #     if head_dim == 64:
-    #         return (64, 64, 4, 3)
-    #     elif head_dim == 128:
-    #         return (64, 128, 8, 3)
-    #     else:
-    #         return (64, 64, 4, 2)
-    # elif torch.cuda.get_device_capability() >= (8, 0):  # A100
-    #     if head_dim == 64:
-    #         return (32, 128, 4, 3)
-    #     elif head_dim == 128:
-    #         return (64, 128, 8, 3)
-    #     else:
-    #         return (64, 64, 4, 2)
-    # else:  # modest hardware or extremely large head_dim
-    #     return (16, 16, 4, 1)
+    if dtype == torch.float32:
+        return (16, 16, 4, 1)
+    if head_dim <= 256 and torch.version.hip:
+        if head_dim == 64:
+            return (64, 64, 4, 1)
+        elif head_dim == 128:
+            return (64, 128, 4, 1)
+        else:
+            return (64, 64, 4, 1)
+    elif head_dim <= 256 and torch.cuda.get_device_capability() >= (9, 0):  # H100
+        if head_dim == 64:
+            return (64, 64, 4, 3)
+        elif head_dim == 128:
+            return (64, 128, 8, 3)
+        else:
+            return (64, 64, 4, 2)
+    elif torch.cuda.get_device_capability() >= (8, 0):  # A100
+        if head_dim == 64:
+            return (32, 128, 4, 3)
+        elif head_dim == 128:
+            return (64, 128, 8, 3)
+        else:
+            return (64, 64, 4, 2)
+    else:  # modest hardware or extremely large head_dim
+        return (16, 16, 4, 1)
 
 
 def create_num_blocks_fake_generator(sparse_indices):
@@ -712,7 +712,8 @@ def create_indices_fake(x) -> torch.Tensor:
 
 
 from torch._inductor.kernel.flex_decoding import create_flex_decoding_kernel
-
+from ..codegen.cpp_mha_template import CppMHATemplate
+# # TODO: We probably also need a layout constraint?
 @register_lowering(torch.ops.higher_order.flex_attention, type_promotion_kind=None)
 def flex_attention(
     query,
@@ -738,333 +739,292 @@ def flex_attention(
         SPARSE_KV_BLOCK_SIZE,
         mask_graph,
     ) = block_mask
-    score_mod_other_buffers = maybe_realize(score_mod_other_buffers)
-    mask_mod_other_buffers = maybe_realize(mask_mod_other_buffers)
-    # placeholder_inps = [
-    #     create_placeholder(name, dtype, query.get_device())
-    #     for name, dtype in [
-    #         ("score", query.get_dtype()),
-    #         ("b", torch.int32),
-    #         ("h", torch.int32),
-    #         ("m", torch.int32),
-    #         ("n", torch.int32),
-    #     ]
-    # ]
-    # subgraph_buffer = build_subgraph_buffer(
-    #     placeholder_inps + list(score_mod_other_buffers), subgraph
-    # )
 
-    Bq, Hq, seq_len_q, qk_head_dim = query.get_size()
-    Bkv, Hkv, seq_len_kv, v_head_dim = value.get_size()
-    B = Bq
+    if query.get_device().type == 'cpu':
+        score_mod_other_buffers = maybe_realize(score_mod_other_buffers)
+        mask_mod_other_buffers = maybe_realize(mask_mod_other_buffers)
 
-    # Construct output layout with strides matching the query.
-    out_size = [B, Hq, seq_len_q, v_head_dim]
-    fill_order = get_fill_order(query.get_stride())
-    out_strides = construct_strides(out_size, fill_order)
+        Bq, Hq, seq_len_q, qk_head_dim = query.get_size()
+        Bkv, Hkv, seq_len_kv, v_head_dim = value.get_size()
+        B = Bq
 
-    layout = FixedLayout(
-        query.get_device(),
-        query.get_dtype(),
-        [B, Hq, seq_len_q, v_head_dim],
-        stride=out_strides,
-    )
+        # Construct output layout with strides matching the query.
+        out_size = [B, Hq, seq_len_q, v_head_dim]
+        fill_order = get_fill_order(query.get_stride())
+        out_strides = construct_strides(out_size, fill_order)
 
-    choices: List[Any] = []
-
-    CppMHATemplate.add_choices(
-        choices=choices,
-        input_nodes=[
-            query,
-            key,
-            value,
-            kv_indices
-        ],
-        layout=layout,
-        scale=scale,
-        score_mod=subgraph,
-        block_mask=block_mask,
-        kv_block_size=SPARSE_KV_BLOCK_SIZE,
-        kv_num_blocks=kv_num_blocks,
+        layout = FixedLayout(
+            query.get_device(),
+            query.get_dtype(),
+            [B, Hq, seq_len_q, v_head_dim],
+            stride=out_strides,
         )
 
-    inputs_for_autotuning = (
-        [
+        choices: List[Any] = []
+        CppMHATemplate.add_choices(
+            choices=choices,
+            input_nodes=[
+                query,
+                key,
+                value,
+                kv_indices
+            ],
+            layout=layout,
+            scale=scale,
+            score_mod=subgraph,
+            block_mask=block_mask,
+            kv_block_size=SPARSE_KV_BLOCK_SIZE,
+            kv_num_blocks=kv_num_blocks,
+            )
+        inputs_for_autotuning = (
+            [
+                query,
+                key,
+                value,
+            ]
+        )
+        res = autotune_select_algorithm(
+            "flex_attention",
+            choices,
+            inputs_for_autotuning,
+            layout,
+        )
+        return (res, 1)
+
+    else:
+        placeholder_inps = [
+            create_placeholder(name, dtype, query.get_device())
+            for name, dtype in [
+                ("score", query.get_dtype()),
+                ("b", torch.int32),
+                ("h", torch.int32),
+                ("m", torch.int32),
+                ("n", torch.int32),
+            ]
+        ]
+        subgraph_buffer = build_subgraph_buffer(
+            placeholder_inps + list(score_mod_other_buffers), subgraph
+        )
+        mask_graph_placeholder_inps = [
+            create_placeholder(name, dtype, query.get_device())
+            for name, dtype in [
+                ("b", torch.int32),
+                ("h", torch.int32),
+                ("m", torch.int32),
+                ("n", torch.int32),
+            ]
+        ]
+        mask_graph_buffer = build_subgraph_buffer(
+            mask_graph_placeholder_inps + list(mask_mod_other_buffers), mask_graph
+        )
+
+        kernel_options = dict(kernel_options)
+        kernel_options.setdefault("FLOAT32_PRECISION", get_float32_precision())
+        if _use_flex_decoding(query, kernel_options):
+            return create_flex_decoding_kernel(
+                query,
+                key,
+                value,
+                block_mask,
+                scale,
+                kernel_options,
+                subgraph_buffer,
+                mask_graph_buffer,
+                score_mod_other_buffers,
+                mask_mod_other_buffers,
+            )
+
+        (
             query,
             key,
             value,
-        ]
-    )
+            kv_num_blocks,
+            kv_indices,
+            full_kv_num_blocks,
+            full_kv_indices,
+            q_num_blocks,
+            q_indices,
+            full_q_num_blocks,
+            full_q_indices,
+        ) = maybe_realize(
+            [
+                query,
+                key,
+                value,
+                kv_num_blocks,
+                kv_indices,
+                full_kv_num_blocks,
+                full_kv_indices,
+                q_num_blocks,
+                q_indices,
+                full_q_num_blocks,
+                full_q_indices,
+            ]
+        )
 
-    
-    res = autotune_select_algorithm(
-        "flex_attention",
-        choices,
-        inputs_for_autotuning,
-        layout,
-    )
+        score_mod_other_buffers = maybe_realize(score_mod_other_buffers)
+        mask_mod_other_buffers = maybe_realize(mask_mod_other_buffers)
 
-    return (res, 1)
+        Bq, Hq, seq_len_q, qk_head_dim = query.get_size()
+        Bkv, Hkv, seq_len_kv, v_head_dim = value.get_size()
+        assert V.graph.sizevars.evaluate_expr(
+            sympy.Eq(Bq, Bkv) | sympy.Eq(Bkv, 1)
+        ), f"Bq and Bkv must broadcastable. Got Bq={Bq} and Bkv={Bkv}"
+        B = Bq
 
+        if seq_len_q % 128 != 0 or seq_len_kv % 128 != 0:
+            kernel_options.setdefault("IS_DIVISIBLE", False)
+        else:
+            kernel_options.setdefault("IS_DIVISIBLE", True)
 
-# # TODO: We probably also need a layout constraint?
-# @register_lowering(torch.ops.higher_order.flex_attention, type_promotion_kind=None)
-# def flex_attention(
-#     query,
-#     key,
-#     value,
-#     subgraph,
-#     block_mask,
-#     scale,
-#     kernel_options,
-#     score_mod_other_buffers,
-#     mask_mod_other_buffers,
-# ):
-#     (
-#         kv_num_blocks,
-#         kv_indices,
-#         full_kv_num_blocks,
-#         full_kv_indices,
-#         q_num_blocks,
-#         q_indices,
-#         full_q_num_blocks,
-#         full_q_indices,
-#         SPARSE_Q_BLOCK_SIZE,
-#         SPARSE_KV_BLOCK_SIZE,
-#         mask_graph,
-#     ) = block_mask
-#     placeholder_inps = [
-#         create_placeholder(name, dtype, query.get_device())
-#         for name, dtype in [
-#             ("score", query.get_dtype()),
-#             ("b", torch.int32),
-#             ("h", torch.int32),
-#             ("m", torch.int32),
-#             ("n", torch.int32),
-#         ]
-#     ]
-#     subgraph_buffer = build_subgraph_buffer(
-#         placeholder_inps + list(score_mod_other_buffers), subgraph
-#     )
-#     mask_graph_placeholder_inps = [
-#         create_placeholder(name, dtype, query.get_device())
-#         for name, dtype in [
-#             ("b", torch.int32),
-#             ("h", torch.int32),
-#             ("m", torch.int32),
-#             ("n", torch.int32),
-#         ]
-#     ]
-#     mask_graph_buffer = build_subgraph_buffer(
-#         mask_graph_placeholder_inps + list(mask_mod_other_buffers), mask_graph
-#     )
-#     kernel_options = dict(kernel_options)
-#     kernel_options.setdefault("FLOAT32_PRECISION", get_float32_precision())
-#     if _use_flex_decoding(query, kernel_options):
-#         return create_flex_decoding_kernel(
-#             query,
-#             key,
-#             value,
-#             block_mask,
-#             scale,
-#             kernel_options,
-#             subgraph_buffer,
-#             mask_graph_buffer,
-#             score_mod_other_buffers,
-#             mask_mod_other_buffers,
-#         )
+        # Reuse query strides for output layout despite different last dimension.
+        # This works because only the last dim differs and we check it is contiguous.
+        q_strides = query.get_stride()
+        assert q_strides[-1] == 1, "Query must be contiguous in the last dimension"
 
-#     (
-#         query,
-#         key,
-#         value,
-#         kv_num_blocks,
-#         kv_indices,
-#         full_kv_num_blocks,
-#         full_kv_indices,
-#         q_num_blocks,
-#         q_indices,
-#         full_q_num_blocks,
-#         full_q_indices,
-#     ) = maybe_realize(
-#         [
-#             query,
-#             key,
-#             value,
-#             kv_num_blocks,
-#             kv_indices,
-#             full_kv_num_blocks,
-#             full_kv_indices,
-#             q_num_blocks,
-#             q_indices,
-#             full_q_num_blocks,
-#             full_q_indices,
-#         ]
-#     )
+        # Construct output layout with strides matching the query.
+        out_size = [B, Hq, seq_len_q, v_head_dim]
+        fill_order = get_fill_order(query.get_stride())
+        out_strides = construct_strides(out_size, fill_order)
 
-#     score_mod_other_buffers = maybe_realize(score_mod_other_buffers)
-#     mask_mod_other_buffers = maybe_realize(mask_mod_other_buffers)
+        layout = FixedLayout(
+            query.get_device(),
+            query.get_dtype(),
+            [B, Hq, seq_len_q, v_head_dim],
+            stride=out_strides,
+        )
+        # see NOTE:[TritonTemplates with multiple outputs]
+        logsumexp_shape = [B, Hq, seq_len_q]
+        logsumexp = empty_strided(
+            logsumexp_shape,
+            None,
+            dtype=torch.float32,  # The logsumexp is always stored in fp32 regardless of the input dtype
+            device=query.get_device(),
+        )
+        kernel_options.setdefault("SM_SCALE", scale)
 
-#     Bq, Hq, seq_len_q, qk_head_dim = query.get_size()
-#     Bkv, Hkv, seq_len_kv, v_head_dim = value.get_size()
-#     assert V.graph.sizevars.evaluate_expr(
-#         sympy.Eq(Bq, Bkv) | sympy.Eq(Bkv, 1)
-#     ), f"Bq and Bkv must broadcastable. Got Bq={Bq} and Bkv={Bkv}"
-#     B = Bq
+        # Determine GQA broadcast factor.
+        gqa_shared_heads = Hq // Hkv
+        kernel_options.setdefault("GQA_SHARED_HEADS", gqa_shared_heads)
 
-#     if seq_len_q % 128 != 0 or seq_len_kv % 128 != 0:
-#         kernel_options.setdefault("IS_DIVISIBLE", False)
-#     else:
-#         kernel_options.setdefault("IS_DIVISIBLE", True)
+        # Inside of Triton kernel, only apply partial masking if partial blocks are computed.
+        # full_kv_num_blocks is None if partial blocks are not computed
+        has_full_blocks = full_kv_num_blocks is not None
+        kernel_options.setdefault("HAS_FULL_BLOCKS", has_full_blocks)
+        if not has_full_blocks:
+            full_kv_num_blocks, full_kv_indices = (
+                empty(0, device=query.get_device()) for _ in range(2)
+            )
+        kernel_options.setdefault("QK_HEAD_DIM", qk_head_dim)
+        kernel_options.setdefault("V_HEAD_DIM", v_head_dim)
 
-#     # Reuse query strides for output layout despite different last dimension.
-#     # This works because only the last dim differs and we check it is contiguous.
-#     q_strides = query.get_stride()
-#     assert q_strides[-1] == 1, "Query must be contiguous in the last dimension"
+        choices: List[Any] = []
+        configs: List[Tuple[int, int, int, int]] = []
+        configs.append(_get_default_config_fwd(query))
+        if config.max_autotune:
+            configs += [
+                (128, 64, 4, 3),
+                (128, 128, 4, 3),
+                (128, 128, 8, 2),
+                (64, 128, 4, 3),
+                (64, 64, 4, 3),
+            ]
 
-#     # Construct output layout with strides matching the query.
-#     out_size = [B, Hq, seq_len_q, v_head_dim]
-#     fill_order = get_fill_order(query.get_stride())
-#     out_strides = construct_strides(out_size, fill_order)
+            # On ROCm convert num_stages to 1 to avoid shmem issues
+            if torch.version.hip:
+                configs = [(c[0], c[1], c[2], 1) for c in configs]
 
-#     layout = FixedLayout(
-#         query.get_device(),
-#         query.get_dtype(),
-#         [B, Hq, seq_len_q, v_head_dim],
-#         stride=out_strides,
-#     )
-#     # see NOTE:[TritonTemplates with multiple outputs]
-#     logsumexp_shape = [B, Hq, seq_len_q]
-#     logsumexp = empty_strided(
-#         logsumexp_shape,
-#         None,
-#         dtype=torch.float32,  # The logsumexp is always stored in fp32 regardless of the input dtype
-#         device=query.get_device(),
-#     )
-#     kernel_options.setdefault("SM_SCALE", scale)
+        # Mark SPARSE_KV_BLOCK_SIZE & SPARSE_Q_BLOCK_SIZE as static shapes and add guards.
+        SPARSE_KV_BLOCK_SIZE = V.graph.sizevars.evaluate_static_shape(SPARSE_KV_BLOCK_SIZE)
+        SPARSE_Q_BLOCK_SIZE = V.graph.sizevars.evaluate_static_shape(SPARSE_Q_BLOCK_SIZE)
+        assert V.graph.sizevars.evaluate_expr(
+            sympy.Le(seq_len_q, sympy.Mul(kv_indices.get_size()[-2], SPARSE_Q_BLOCK_SIZE))
+        ), "Q seqlen must be smaller than the block_mask size in the Q dimension, considering pass a larger block_mask."
+        assert V.graph.sizevars.evaluate_expr(
+            sympy.Le(seq_len_kv, sympy.Mul(kv_indices.get_size()[-1], SPARSE_KV_BLOCK_SIZE))
+        ), "KV seqlen must be smaller than the block_mask size in the KV dimension, considering pass a larger block_mask."
 
-#     # Determine GQA broadcast factor.
-#     gqa_shared_heads = Hq // Hkv
-#     kernel_options.setdefault("GQA_SHARED_HEADS", gqa_shared_heads)
+        # Note, we don't need to pass in the captured buffers explicitly
+        # because they're implicitly added by the score_mod function
+        # We do need to explicitly pass it in for autotuning though.
+        original_kernel_options = kernel_options.copy()
+        for BLOCK_M, BLOCK_N, num_warps, num_stages in configs:
+            if SPARSE_KV_BLOCK_SIZE % BLOCK_N != 0 or SPARSE_Q_BLOCK_SIZE % BLOCK_M != 0:
+                if len(configs) == 1:
+                    raise ValueError(
+                        f"Q and KV block size must be divisible by BLOCK_M and BLOCK_N. We"
+                        f"got Q_BLOCK_SIZE={SPARSE_Q_BLOCK_SIZE} and KV_BLOCK_SIZE={SPARSE_KV_BLOCK_SIZE}."
+                    )
+                continue
+            # Work around https://github.com/pytorch/pytorch/issues/129625
+            if num_stages == 2:
+                continue
 
-#     # Inside of Triton kernel, only apply partial masking if partial blocks are computed.
-#     # full_kv_num_blocks is None if partial blocks are not computed
-#     has_full_blocks = full_kv_num_blocks is not None
-#     kernel_options.setdefault("HAS_FULL_BLOCKS", has_full_blocks)
-#     if not has_full_blocks:
-#         full_kv_num_blocks, full_kv_indices = (
-#             empty(0, device=query.get_device()) for _ in range(2)
-#         )
-#     kernel_options.setdefault("QK_HEAD_DIM", qk_head_dim)
-#     kernel_options.setdefault("V_HEAD_DIM", v_head_dim)
+            cur_kernel_options = original_kernel_options.copy()
+            # Performance tuning
+            cur_kernel_options.setdefault("BLOCK_M", BLOCK_M)
+            cur_kernel_options.setdefault("BLOCK_N", BLOCK_N)
+            # Blocksparse options
+            cur_kernel_options.setdefault("SPARSE_Q_BLOCK_SIZE", SPARSE_Q_BLOCK_SIZE)
+            cur_kernel_options.setdefault("SPARSE_KV_BLOCK_SIZE", SPARSE_KV_BLOCK_SIZE)
 
-#     choices: List[Any] = []
-#     configs: List[Tuple[int, int, int, int]] = []
-#     configs.append(_get_default_config_fwd(query))
-#     if config.max_autotune:
-#         configs += [
-#             (128, 64, 4, 3),
-#             (128, 128, 4, 3),
-#             (128, 128, 8, 2),
-#             (64, 128, 4, 3),
-#             (64, 64, 4, 3),
-#         ]
-
-#         # On ROCm convert num_stages to 1 to avoid shmem issues
-#         if torch.version.hip:
-#             configs = [(c[0], c[1], c[2], 1) for c in configs]
-
-#     # Mark SPARSE_KV_BLOCK_SIZE & SPARSE_Q_BLOCK_SIZE as static shapes and add guards.
-#     SPARSE_KV_BLOCK_SIZE = V.graph.sizevars.evaluate_static_shape(SPARSE_KV_BLOCK_SIZE)
-#     SPARSE_Q_BLOCK_SIZE = V.graph.sizevars.evaluate_static_shape(SPARSE_Q_BLOCK_SIZE)
-#     assert V.graph.sizevars.evaluate_expr(
-#         sympy.Le(seq_len_q, sympy.Mul(kv_indices.get_size()[-2], SPARSE_Q_BLOCK_SIZE))
-#     ), "Q seqlen must be smaller than the block_mask size in the Q dimension, considering pass a larger block_mask."
-#     assert V.graph.sizevars.evaluate_expr(
-#         sympy.Le(seq_len_kv, sympy.Mul(kv_indices.get_size()[-1], SPARSE_KV_BLOCK_SIZE))
-#     ), "KV seqlen must be smaller than the block_mask size in the KV dimension, considering pass a larger block_mask."
-
-#     # Note, we don't need to pass in the captured buffers explicitly
-#     # because they're implicitly added by the score_mod function
-#     # We do need to explicitly pass it in for autotuning though.
-#     original_kernel_options = kernel_options.copy()
-#     for BLOCK_M, BLOCK_N, num_warps, num_stages in configs:
-#         if SPARSE_KV_BLOCK_SIZE % BLOCK_N != 0 or SPARSE_Q_BLOCK_SIZE % BLOCK_M != 0:
-#             if len(configs) == 1:
-#                 raise ValueError(
-#                     f"Q and KV block size must be divisible by BLOCK_M and BLOCK_N. We"
-#                     f"got Q_BLOCK_SIZE={SPARSE_Q_BLOCK_SIZE} and KV_BLOCK_SIZE={SPARSE_KV_BLOCK_SIZE}."
-#                 )
-#             continue
-#         # Work around https://github.com/pytorch/pytorch/issues/129625
-#         if num_stages == 2:
-#             continue
-
-#         cur_kernel_options = original_kernel_options.copy()
-#         # Performance tuning
-#         cur_kernel_options.setdefault("BLOCK_M", BLOCK_M)
-#         cur_kernel_options.setdefault("BLOCK_N", BLOCK_N)
-#         # Blocksparse options
-#         cur_kernel_options.setdefault("SPARSE_Q_BLOCK_SIZE", SPARSE_Q_BLOCK_SIZE)
-#         cur_kernel_options.setdefault("SPARSE_KV_BLOCK_SIZE", SPARSE_KV_BLOCK_SIZE)
-
-#         error = flex_attention_template.maybe_append_choice(
-#             choices=choices,
-#             input_nodes=[
-#                 query,
-#                 key,
-#                 value,
-#                 logsumexp,
-#                 kv_num_blocks,
-#                 kv_indices,
-#                 full_kv_num_blocks,
-#                 full_kv_indices,
-#             ],
-#             layout=layout,
-#             subgraphs=[
-#                 subgraph_buffer,
-#                 mask_graph_buffer,
-#             ],
-#             mutated_inputs=[
-#                 logsumexp,
-#             ],
-#             num_stages=num_stages,
-#             num_warps=num_warps,
-#             call_sizes=query.get_size(),
-#             **cur_kernel_options,
-#         )
-#         if error is not None and len(configs) == 1:
-#             raise error
-#     inputs_for_autotuning = (
-#         [
-#             query,
-#             key,
-#             value,
-#             logsumexp,
-#             kv_num_blocks,
-#             kv_indices,
-#             full_kv_num_blocks,
-#             full_kv_indices,
-#         ]
-#         + list(score_mod_other_buffers)
-#         + list(mask_mod_other_buffers)
-#     )
-#     input_gen_fns = {
-#         4: create_num_blocks_fake_generator(kv_indices),
-#         5: create_indices_fake,
-#         6: create_num_blocks_fake_generator(full_kv_indices),
-#         7: create_indices_fake,
-#     }
-#     return (
-#         autotune_select_algorithm(
-#             "flex_attention",
-#             choices,
-#             inputs_for_autotuning,
-#             layout,
-#             input_gen_fns=input_gen_fns,
-#         ),
-#         logsumexp,
-#     )
+            error = flex_attention_template.maybe_append_choice(
+                choices=choices,
+                input_nodes=[
+                    query,
+                    key,
+                    value,
+                    logsumexp,
+                    kv_num_blocks,
+                    kv_indices,
+                    full_kv_num_blocks,
+                    full_kv_indices,
+                ],
+                layout=layout,
+                subgraphs=[
+                    subgraph_buffer,
+                    mask_graph_buffer,
+                ],
+                mutated_inputs=[
+                    logsumexp,
+                ],
+                num_stages=num_stages,
+                num_warps=num_warps,
+                call_sizes=query.get_size(),
+                **cur_kernel_options,
+            )
+            if error is not None and len(configs) == 1:
+                raise error
+        inputs_for_autotuning = (
+            [
+                query,
+                key,
+                value,
+                logsumexp,
+                kv_num_blocks,
+                kv_indices,
+                full_kv_num_blocks,
+                full_kv_indices,
+            ]
+            + list(score_mod_other_buffers)
+            + list(mask_mod_other_buffers)
+        )
+        input_gen_fns = {
+            4: create_num_blocks_fake_generator(kv_indices),
+            5: create_indices_fake,
+            6: create_num_blocks_fake_generator(full_kv_indices),
+            7: create_indices_fake,
+        }
+        return (
+            autotune_select_algorithm(
+                "flex_attention",
+                choices,
+                inputs_for_autotuning,
+                layout,
+                input_gen_fns=input_gen_fns,
+            ),
+            logsumexp,
+        )
 
 
 # ---------------------------- Backward HOP Implementation ----------------------------
