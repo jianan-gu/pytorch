@@ -286,6 +286,22 @@ class CppMHATemplate(CppTemplate):
         subgraph_buffer_data = subgraph_buffer.data
         assert isinstance(subgraph_buffer_data, ir.Pointwise), subgraph_buffer_data
 
+        import sympy
+        subgraph_number = 0
+        name = f"PlaceholderSubstitution_{subgraph_number}"
+        from ..virtualized import ops, V
+        class PlaceholderSubstitution(V.WrapperHandler):  # type: ignore[name-defined]
+            self.name = name
+            # TODO: we didn't change the load store here
+            #       just leave the code here in case we
+            #       need to override it
+            def load(self, name: str, index: sympy.Expr):
+                # return f"({fixed_inputs[name]})"
+                return self._inner.load(name, index)
+            def store(self, name, index, value, mode=None):
+                return self._inner.store(name, index, value, mode)
+
+
         from ..loop_body import LoopBody
         from ..utils import sympy_index_symbol_with_prefix, SymT
         from ..virtualized import ops, V
@@ -296,6 +312,22 @@ class CppMHATemplate(CppTemplate):
 
         from .cpp import CppKernel, CppKernelProxy, KernelGroup
         kernel_group = KernelGroup()
+        # TODO
+        # kernel_group.args = ??
+        kernel_args = {
+            "arg0_1": "in_ptr0",
+            "arg1_1": "in_ptr1",
+            "arg2_1": "in_ptr2",
+            "arg3_1": "in_ptr3",
+            "arg4_1": "in_ptr4",
+        }
+        
+        args = kernel_group.args
+        for name, inp in kernel_args.items():
+            args.input_buffers[name] = inp
+        kernel_group.args = args
+
+
         cpp_kernel_proxy = CppKernelProxy(kernel_group)
         bodies = []
         var_sizes_list = []
@@ -307,11 +339,12 @@ class CppMHATemplate(CppTemplate):
             for i, sz in enumerate(var_sizes)
         }        
         def fn(*args):
-            V.ops.store(
-                output_name,
-                output_index,
-                subgraph_buffer_data.make_loader()(args).value,
-            )
+            with V.set_ops_handler(PlaceholderSubstitution(V.ops)):
+                V.ops.store(
+                    output_name,
+                    output_index,
+                    subgraph_buffer_data.make_loader()(args).value,
+                )
 
         body = LoopBody(
             fn,
