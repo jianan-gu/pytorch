@@ -752,7 +752,7 @@ def flex_attention(
                 ("arg1_1", torch.int32),
                 ("arg2_1", torch.int32),
                 ("arg3_1", torch.int32),
-                ("arg4_1", torch.int32),
+                ("arg10_1", torch.int32), # TODO: fix the random picked name here: arg10_1
             ]
         ]
         subgraph_buffer = build_subgraph_buffer(

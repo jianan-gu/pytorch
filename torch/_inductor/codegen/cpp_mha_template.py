@@ -19,7 +19,7 @@ ATTENTION_TEMPLATE = r"""
 {{template.header().getvalue()}}
 #include <ATen/native/CPUBlas.h>
 
-{%- set kernel_args = {"query": query, "key": key, "value": value, "kv_indices": kv_indices, "score_other": score_mod_other_buffers, "mask_other": mask_mod_other_buffers} %}
+{%- set kernel_args = {"query": query, "key": key, "value": value, "kv_indices": kv_indices, "mask_other": mask_mod_other_buffers} %}
 {{kernel.def_kernel(inputs=kernel_args, outputs={"output": output})}}
 {
   // kv page size, q and kv split size
@@ -158,7 +158,8 @@ ATTENTION_TEMPLATE = r"""
                 auto in_ptr1 = b_.data();
                 auto in_ptr2 = h_.data();
                 auto in_ptr3 = q_.data();
-                auto in_ptr4 = k_.data();
+                auto in_ptr10 = k_.data();
+                auto in_ptr4 = mask_other;
                 
                 accum_t* out_ptr0 = in_ptr0;
                 {{template.modification(score_mod)}}
@@ -306,8 +307,8 @@ class CppMHATemplate(CppTemplate):
             "arg1_1": "in_ptr1",
             "arg2_1": "in_ptr2",
             "arg3_1": "in_ptr3",
+            "arg10_1": "in_ptr10",
             "arg4_1": "in_ptr4",
-            "arg5_1": "in_ptr5",
         }
 
         kernel_output_args = {
