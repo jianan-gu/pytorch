@@ -291,25 +291,33 @@ class CppMHATemplate(CppTemplate):
         from ..utils import sympy_index_symbol_with_prefix, SymT
         from ..virtualized import ops, V
 
-
         # TODO: what should be the output name??
-        output_name = "arg0_1"
+        output_name = "buf0"     
+        V.graph.register_buffer(subgraph_buffer)
 
         from .cpp import CppKernel, CppKernelProxy, KernelGroup
         kernel_group = KernelGroup()
         # TODO
         # kernel_group.args = ??
-        kernel_args = {
+        kernel_input_args = {
             "arg0_1": "in_ptr0",
             "arg1_1": "in_ptr1",
             "arg2_1": "in_ptr2",
             "arg3_1": "in_ptr3",
             "arg4_1": "in_ptr4",
         }
+
+        kernel_output_args = {
+            "buf0": "out_ptr0"
+        }
         
         args = kernel_group.args
-        for name, inp in kernel_args.items():
+        for name, inp in kernel_input_args.items():
             args.input_buffers[name] = inp
+
+        for name, inp in kernel_output_args.items():
+            args.output_buffers[name] = inp        
+        
         kernel_group.args = args
 
 
