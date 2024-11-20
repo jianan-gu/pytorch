@@ -790,7 +790,7 @@ def flex_attention(
         choices: List[Any] = []
         CppMHATemplate.add_choices(
             choices=choices,
-            input_nodes=[query, key, value, kv_indices],
+            input_nodes=[query, key, value, kv_indices, score_mod_other_buffers[0], mask_mod_other_buffers[0]],
             layout=layout,
             scale=scale,
             score_mod=subgraph_buffer,

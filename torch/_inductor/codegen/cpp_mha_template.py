@@ -19,7 +19,7 @@ ATTENTION_TEMPLATE = r"""
 {{template.header().getvalue()}}
 #include <ATen/native/CPUBlas.h>
 
-{%- set kernel_args = {"query": query, "key": key, "value": value, "kv_indices": kv_indices} %}
+{%- set kernel_args = {"query": query, "key": key, "value": value, "kv_indices": kv_indices, "score_other": score_mod_other_buffers, "mask_other": mask_mod_other_buffers} %}
 {{kernel.def_kernel(inputs=kernel_args, outputs={"output": output})}}
 {
   // kv page size, q and kv split size
@@ -159,6 +159,7 @@ ATTENTION_TEMPLATE = r"""
                 auto in_ptr2 = h_.data();
                 auto in_ptr3 = q_.data();
                 auto in_ptr4 = k_.data();
+                
                 accum_t* out_ptr0 = in_ptr0;
                 {{template.modification(score_mod)}}
                 }
@@ -176,6 +177,7 @@ ATTENTION_TEMPLATE = r"""
                 auto in_ptr1 = h_.data();
                 auto in_ptr2 = q_.data();
                 auto in_ptr3 = k_.data();
+                auto in_ptr4 = mask_other;
                 std::vector<int64_t> temp = {0};
                 int64_t* out_ptr0 = temp.data();
                 {{template.modification(mask_mod)}}
@@ -305,6 +307,7 @@ class CppMHATemplate(CppTemplate):
             "arg2_1": "in_ptr2",
             "arg3_1": "in_ptr3",
             "arg4_1": "in_ptr4",
+            "arg5_1": "in_ptr5",
         }
 
         kernel_output_args = {
@@ -428,6 +431,8 @@ class CppMHATemplate(CppTemplate):
             key=key,
             value=value,
             kv_indices=self.input_nodes[3],
+            score_mod_other_buffers=self.input_nodes[4],
+            mask_mod_other_buffers=self.input_nodes[5],
             scale=self.scale,
             size_per_thread=size_per_thread,
             accumulate_dtype=torch.float,
