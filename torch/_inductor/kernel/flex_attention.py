@@ -788,9 +788,13 @@ def flex_attention(
         )
 
         choices: List[Any] = []
+        input_nodes = [query, key, value, kv_indices]
+        if score_mod_other_buffers and mask_mod_other_buffers:
+            input_nodes += [score_mod_other_buffers[0], mask_mod_other_buffers[0]]
+
         CppMHATemplate.add_choices(
             choices=choices,
-            input_nodes=[query, key, value, kv_indices, score_mod_other_buffers[0], mask_mod_other_buffers[0]],
+            input_nodes=input_nodes,
             layout=layout,
             scale=scale,
             score_mod=subgraph_buffer,

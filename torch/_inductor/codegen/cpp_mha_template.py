@@ -159,7 +159,9 @@ ATTENTION_TEMPLATE = r"""
                 auto in_ptr2 = h_.data();
                 auto in_ptr3 = q_.data();
                 auto in_ptr10 = k_.data();
-                auto in_ptr4 = mask_other;
+                {%- if mask_mod_other_buffers %}
+                    auto in_ptr4 = mask_other;
+                {%- endif %}
                 
                 accum_t* out_ptr0 = in_ptr0;
                 {{template.modification(score_mod)}}
@@ -178,7 +180,9 @@ ATTENTION_TEMPLATE = r"""
                 auto in_ptr1 = h_.data();
                 auto in_ptr2 = q_.data();
                 auto in_ptr3 = k_.data();
-                auto in_ptr4 = mask_other;
+                {%- if mask_mod_other_buffers %}
+                    auto in_ptr4 = mask_other;
+                {%- endif %}
                 std::vector<int64_t> temp = {0};
                 int64_t* out_ptr0 = temp.data();
                 {{template.modification(mask_mod)}}
@@ -427,13 +431,14 @@ class CppMHATemplate(CppTemplate):
         if template_buffer_node is not None:
             buf_out = template_buffer_node
 
+        has_other_buffer = len(self.input_nodes) == 6
         options = dict(
             query=query,
             key=key,
             value=value,
             kv_indices=self.input_nodes[3],
-            score_mod_other_buffers=self.input_nodes[4],
-            mask_mod_other_buffers=self.input_nodes[5],
+            score_mod_other_buffers=self.input_nodes[4] if has_other_buffer else None,
+            mask_mod_other_buffers=self.input_nodes[5] if has_other_buffer else None,
             scale=self.scale,
             size_per_thread=size_per_thread,
             accumulate_dtype=torch.float,
