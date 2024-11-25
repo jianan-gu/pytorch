@@ -756,6 +756,7 @@ def flex_attention(
         subgraph_buffer = build_subgraph_buffer(
             placeholder_inps + list(score_mod_other_buffers), subgraph
         )
+        subgraph_buffer.freeze_layout()
         mask_graph_placeholder_inps = [
             create_placeholder(name, dtype, query.get_device())
             for name, dtype in [
