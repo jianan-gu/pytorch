@@ -741,15 +741,16 @@ def flex_attention(
         SPARSE_KV_BLOCK_SIZE,
         mask_graph,
     ) = block_mask
+    fake_buffers: List[ir.Buffer] = []
     if query.get_device().type == "cpu":
         placeholder_inps = [
             create_placeholder(name, dtype, query.get_device())
             for name, dtype in [
-                ("arg0_1", query.get_dtype()),
-                ("arg1_1", torch.int32),
-                ("arg2_1", torch.int32),
-                ("arg3_1", torch.int32),
-                ("arg10_1", torch.int32), # TODO: fix the random picked name here: arg10_1
+                ("score", query.get_dtype()),
+                ("b", torch.int32),
+                ("h", torch.int32),
+                ("q_idx", torch.int32),
+                ("kv_idx", torch.int32), # TODO: fix the random picked name here: arg10_1
             ]
         ]
         subgraph_buffer = build_subgraph_buffer(
@@ -758,15 +759,21 @@ def flex_attention(
         mask_graph_placeholder_inps = [
             create_placeholder(name, dtype, query.get_device())
             for name, dtype in [
-                ("arg0_1", torch.int32),
-                ("arg1_1", torch.int32),
-                ("arg2_1", torch.int32),
-                ("arg3_1", torch.int32),
+                ("b", torch.int32),
+                ("h", torch.int32),
+                ("q_idx", torch.int32),
+                ("kv_idx", torch.int32),
             ]
         ]
         mask_graph_buffer = build_subgraph_buffer(
             mask_graph_placeholder_inps + list(mask_mod_other_buffers), mask_graph
         )
+
+        buffer_list = placeholder_inps + list(score_mod_other_buffers) + mask_graph_placeholder_inps + list(mask_mod_other_buffers)
+        for item in buffer_list:
+            fake_buffers.append(item.data.data)
+        
+
         (
             query,
             key,
@@ -826,6 +833,7 @@ def flex_attention(
             score_mod=None if skip_mask_score else subgraph_buffer,
             mask_mod=None if skip_mask_score else mask_graph_buffer,
             kv_block_size=seq_len_kv if SPARSE_KV_BLOCK_SIZE == 1073741824 else SPARSE_KV_BLOCK_SIZE,
+            fake_buffers=fake_buffers,
         )
         inputs_for_autotuning = [
             query,
