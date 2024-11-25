@@ -18,10 +18,10 @@ ATTENTION_TEMPLATE = r"""
 {{template.header().getvalue()}}
 #include <ATen/native/CPUBlas.h>
 
-{%- set kernel_args = {"query": query, "key": key, "value": value, "kv_indices": kv_indices, "mask_other": mask_mod_other_buffers} %}
+{%- set kernel_args = {"query": query, "key": key, "value": value, "kv_num_blocks": kv_num_blocks, "kv_indices": kv_indices, "full_kv_num_blocks": full_kv_num_blocks,  "mask_other": mask_mod_other_buffers} %}
 {{kernel.def_kernel(inputs=kernel_args, outputs={"output": output})}}
 {
-  // kv page size, q and kv split size
+  // kv block size, q and kv split size
   int64_t kvBlockSize = {{kvBlockSize}};
   int64_t qSplitSize = {{qSplitSize}};
   int64_t kvSplitSize = {{kvSplitSize}};
@@ -44,12 +44,19 @@ ATTENTION_TEMPLATE = r"""
   int64_t gqa_shards = num_head / num_head_k;
   int64_t bs_shards = batchSize / batchSize_k;
 
+  {%- if kv_indices %}
   int64_t batchSize_kvi = {{kernel.size(kv_indices, 0)}};
   int64_t num_head_kvi = {{kernel.size(kv_indices, 1)}};
+  int64_t block_num_kvi = {{kernel.size(kv_indices, 3)}};
   bool is_broadcast_bs_kvi = batchSize != batchSize_kvi;
   bool is_broadcast_head_kvi = num_head != num_head_kvi;
   int64_t gqa_shards_kvi = num_head / num_head_kvi;
   int64_t bs_shards_kvi = batchSize / batchSize_kvi;
+  int64_t kviStrideB = {{kernel.stride(kv_indices, 0)}};
+  int64_t kviStrideH = {{kernel.stride(kv_indices, 1)}};
+  int64_t kviStrideQ = {{kernel.stride(kv_indices, 2)}};
+  auto  kv_indices_data = kv_indices;
+  {%- endif %}
 
   // Strides
   int64_t qStrideB = {{kernel.stride(query, 0)}};
@@ -64,30 +71,24 @@ ATTENTION_TEMPLATE = r"""
   int64_t oStrideB = {{kernel.stride(output, 0)}};
   int64_t oStrideM = {{kernel.stride(output, 2)}};
   int64_t oStrideH = {{kernel.stride(output, 1)}};
-  int64_t kviStrideB = {{kernel.stride(kv_indices, 0)}};
-  int64_t kviStrideH = {{kernel.stride(kv_indices, 1)}};
-  int64_t kviStrideQ = {{kernel.stride(kv_indices, 2)}};
 
-  int kv_blocks_num = 0;
-  if(*(kv_indices) == 0){
-    if({{kernel.size(kv_indices, 3)}} >= 1 and *(kv_indices+1) > 0){
-      kv_blocks_num++;
-    }
-  }
-  for(int kv_blocks = kv_blocks_num; kv_blocks <{{kernel.size(kv_indices, 3)}}; kv_blocks++){
-    if(*(kv_indices+kv_blocks)>0 or *(kv_indices+kviStrideB+kv_blocks)>0){
-      kv_blocks_num++;
-    }
-  }
+  {%- if full_kv_num_blocks %}
+    int total_kv_num_blocks = *kv_num_blocks + *full_kv_num_blocks;
+  {%- else %}
+    int total_kv_num_blocks = *kv_num_blocks;
+  {%- endif %}
 
-  int64_t kvSize = {{kernel.size(key, 1)}};
-  // update kvSize, incase like page attention has allocated extra buffers
-  kvSize = kvSize <= kv_blocks_num * kvBlockSize? kvSize : kv_blocks_num * kvBlockSize;
+  // page attention KV cache may have allocated extra block buffers and its shape is (1, H, MAX_S, D)
+  bool is_page_attention = false;
+  if(block_num_kvi != total_kv_num_blocks &&  batchSize_k == 1){
+    is_page_attention=true;
+  }
+  int64_t kvSize = is_page_attention ? total_kv_num_blocks*kvBlockSize : {{kernel.size(key, 1)}};
+
   qSplitSize = qSplitSize > qSize ? qSize : qSplitSize;
   kvSplitSize = kvSplitSize > kvSize ? kvSize : kvSplitSize;
   int64_t qSlice = (qSize + qSplitSize - 1) / qSplitSize;
   int64_t kvTail = (kvSize - 1) % kvSplitSize + 1;
-
 
   // allocate per thread temp buf (accumulate type)
   int64_t size_per_thread =
@@ -104,7 +105,6 @@ ATTENTION_TEMPLATE = r"""
   const scalar_t* q_data = query;
   const scalar_t* k_data = key;
   const scalar_t* v_data = value;
-  auto  kv_indices_data = kv_indices;
 
   scalar_t* out_data = output;
 
@@ -138,6 +138,8 @@ ATTENTION_TEMPLATE = r"""
             cur_kvSplitSize = cur_kvSplitSize == kvSplitSize ? kvSplitSize : kvTail;
 
             // Calculate scale * q @ k.T
+            auto k_addr = k_data + i * kStrideB + j * kStrideH + n  * kStrideN;
+            {%- if kv_indices %}
             auto kv_block_num = n / kvBlockSize;
             auto kv_block_offset = n - kv_block_num * kvBlockSize;
             // getting kv indices by [BS, Head, 1, kv_block_num]
@@ -146,7 +148,10 @@ ATTENTION_TEMPLATE = r"""
             auto kv_logical_data = kv_indices_data + i_kvi*kviStrideB + j_kvi*kviStrideH  + kv_block_num;
             auto i_kv = is_broadcast_bs_kv ? i/bs_shards : i;
             auto j_kv = is_broadcast_head_kv ? j/gqa_shards : j;
-            auto k_addr = k_data + i_kv * kStrideB + j_kv * kStrideH + (*kv_logical_data * kvBlockSize)  * kStrideN;
+            {%- endif %}
+            if(is_page_attention){
+                k_addr = k_data + i_kv * kStrideB + j_kv * kStrideH + (*kv_logical_data * kvBlockSize + kv_block_offset)  * kStrideN;
+            }
 
             at::native::cpublas::gemm(
               at::native::TransposeType::Transpose,
@@ -163,7 +168,16 @@ ATTENTION_TEMPLATE = r"""
               static_cast<accum_t>(0),
               qk_data,
               cur_kvSplitSize);
-            
+
+            // TODO: vec me !
+            for (int64_t row = 0; row < cur_qSplitSize; ++row) {
+              for(int col = 0; col< cur_kvSplitSize; col++){
+                if (*(qk_data + row * cur_kvSplitSize + col) == 0.0){
+                    *(qk_data + row * cur_kvSplitSize + col) = -std::numeric_limits<accum_t>::infinity();
+                }
+              }
+            }
+
             {%- if score_mod and mask_mod %}
             // apply score mod function
             for (int64_t row = 0; row < cur_qSplitSize; ++row) {
@@ -171,7 +185,10 @@ ATTENTION_TEMPLATE = r"""
                 std::vector<int64_t> b_idx = {i};
                 std::vector<int64_t> h_idx = {j};
                 std::vector<int64_t> q_idx = {k*cur_qSplitSize+row};
-                int64_t phisical_kv_idx = *kv_logical_data * kvBlockSize + col;
+                int64_t phisical_kv_idx = n+col;
+                if(is_page_attention){
+                    phisical_kv_idx= *kv_logical_data * kvBlockSize + col;
+                }
                 std::vector<int64_t> kv_idx = {phisical_kv_idx};
                 accum_t* in_ptr0 = qk_data + row * cur_kvSplitSize + col;
                 auto in_ptr1 = b_idx.data();
@@ -191,7 +208,10 @@ ATTENTION_TEMPLATE = r"""
                 std::vector<int64_t> b_idx = {i};
                 std::vector<int64_t> h_idx = {j};
                 std::vector<int64_t> q_idx = {k*cur_qSplitSize+row};
-                int64_t phisical_kv_idx = *kv_logical_data * kvBlockSize + col;
+                int64_t phisical_kv_idx = n+col;
+                if(is_page_attention){
+                    phisical_kv_idx= *kv_logical_data * kvBlockSize + col;
+                }
                 std::vector<int64_t> kv_idx = {phisical_kv_idx};
                 accum_t* qk_block = qk_data + row * cur_kvSplitSize + col;
                 auto in_ptr0 = b_idx.data();
@@ -248,7 +268,10 @@ ATTENTION_TEMPLATE = r"""
               }
             }
             // Calculate Softmax(q @ k.T) @ v
-            auto v_addr = v_data + i_kv * vStrideB + j_kv * vStrideH + (*kv_logical_data * kvBlockSize)  * vStrideN;
+            auto v_addr = v_data + i * vStrideB + j * vStrideH + n  * vStrideN;
+            if(is_page_attention){
+                v_addr = v_data + i_kv * vStrideB + j_kv * vStrideH + (*kv_logical_data * kvBlockSize + kv_block_offset)  * vStrideN;
+            }
 
             at::native::cpublas::gemm(
               at::native::TransposeType::NoTranspose,
@@ -297,6 +320,7 @@ class CppMHATemplate(CppTemplate):
         score_mod,
         mask_mod,
         kv_block_size,
+        has_other_buffer
     ) -> None:
         assert layout.dtype in [torch.float, torch.float16, torch.bfloat16]
         super().__init__("mha", input_nodes, layout, parallel_num_threads())
@@ -304,7 +328,7 @@ class CppMHATemplate(CppTemplate):
         self.score_mod = score_mod
         self.mask_mod = mask_mod
         self.kv_block_size = kv_block_size
-
+        self.has_other_buffer=has_other_buffer
     def modification(self, subgraph_buffer):
         assert isinstance(subgraph_buffer, ir.ComputedBuffer)
         subgraph_buffer_data = subgraph_buffer.data
@@ -379,6 +403,7 @@ class CppMHATemplate(CppTemplate):
         score_mod,
         mask_mod,
         kv_block_size,
+        has_other_buffer,
     ):
         def preprocessor(input_nodes, layout):
             return input_nodes, layout
@@ -396,6 +421,7 @@ class CppMHATemplate(CppTemplate):
             score_mod=score_mod,
             mask_mod=mask_mod,
             kv_block_size=kv_block_size,
+            has_other_buffer=has_other_buffer,
         )
         template.maybe_append_choice(choices)
         return template
@@ -450,14 +476,15 @@ class CppMHATemplate(CppTemplate):
         buf_out = TensorBox.create(self.output_node)
         if template_buffer_node is not None:
             buf_out = template_buffer_node
-        has_other_buffer = len(self.input_nodes) == 6
         options = dict(
             query=query,
             key=key,
             value=value,
-            kv_indices=self.input_nodes[3],
-            score_mod_other_buffers=self.input_nodes[4] if has_other_buffer else None,
-            mask_mod_other_buffers=self.input_nodes[5] if has_other_buffer else None,            
+            kv_num_blocks=self.input_nodes[3],
+            kv_indices=self.input_nodes[4],
+            full_kv_num_blocks=self.input_nodes[5],
+            score_mod_other_buffers=self.input_nodes[6] if self.has_other_buffer else None,
+            mask_mod_other_buffers=self.input_nodes[7] if self.has_other_buffer else None,
             scale=self.scale,
             accumulate_dtype=torch.float,
             query_dtype=query.layout.dtype,

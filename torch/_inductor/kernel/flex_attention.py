@@ -812,11 +812,13 @@ def flex_attention(
             stride=out_strides,
         )
         choices: List[Any] = []
-        input_nodes = [query, key, value, kv_indices]
+        input_nodes = [query, key, value, kv_num_blocks, kv_indices, full_kv_num_blocks]
+        has_other_buffer=False
         if score_mod_other_buffers and mask_mod_other_buffers:
             assert len(score_mod_other_buffers) == 1
             assert len(mask_mod_other_buffers) == 1
-            input_nodes += [score_mod_other_buffers[0], mask_mod_other_buffers[0]]        
+            input_nodes += [score_mod_other_buffers[0], mask_mod_other_buffers[0]]
+            has_other_buffer=True
         skip_mask_score = kernel_options.get("SKIP_MASK_SCORE", False)
         CppMHATemplate.add_choices(
             choices=choices,
@@ -826,6 +828,7 @@ def flex_attention(
             score_mod=None if skip_mask_score else subgraph_buffer,
             mask_mod=None if skip_mask_score else mask_graph_buffer,
             kv_block_size=seq_len_kv if SPARSE_KV_BLOCK_SIZE == 1073741824 else SPARSE_KV_BLOCK_SIZE,
+            has_other_buffer=has_other_buffer,
         )
         inputs_for_autotuning = [
             query,
