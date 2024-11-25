@@ -2,6 +2,7 @@
 import contextlib
 import logging
 from typing import List, Optional
+from unittest.mock import patch
 
 import torch
 import torch.utils
@@ -10,7 +11,7 @@ from ..ir import TensorBox
 from ..select_algorithm import DataProcessorTemplateWrapper
 from ..utils import parallel_num_threads
 from .cpp_template import CppTemplate
-
+from ..virtualized import V
 
 log = logging.getLogger(__name__)
 
@@ -194,9 +195,9 @@ ATTENTION_TEMPLATE = r"""
                 auto in_ptr1 = b_idx.data();
                 auto in_ptr2 = h_idx.data();
                 auto in_ptr3 = q_idx.data();
-                auto in_ptr10 = kv_idx.data();
+                auto in_ptr4 = kv_idx.data();
                 {%- if mask_mod_other_buffers %}
-                auto in_ptr4 = mask_other;
+                auto in_ptr5 = mask_other;
                 {%- endif %}
                 accum_t* out_ptr0 = in_ptr0;
                 {{template.modification(score_mod)}}
@@ -214,12 +215,12 @@ ATTENTION_TEMPLATE = r"""
                 }
                 std::vector<int64_t> kv_idx = {phisical_kv_idx};
                 accum_t* qk_block = qk_data + row * cur_kvSplitSize + col;
-                auto in_ptr0 = b_idx.data();
-                auto in_ptr1 = h_idx.data();
-                auto in_ptr2 = q_idx.data();
-                auto in_ptr3 = kv_idx.data();
+                auto in_ptr1 = b_idx.data();
+                auto in_ptr2 = h_idx.data();
+                auto in_ptr3 = q_idx.data();
+                auto in_ptr4 = kv_idx.data();
                 {%- if mask_mod_other_buffers %}
-                auto in_ptr4 = mask_other;
+                auto in_ptr5 = mask_other;
                 {%- endif %}                
                 std::vector<int64_t> temp = {0};
                 int64_t* out_ptr0 = temp.data();
@@ -320,7 +321,8 @@ class CppMHATemplate(CppTemplate):
         score_mod,
         mask_mod,
         kv_block_size,
-        has_other_buffer
+        has_other_buffer,
+        fake_buffers,
     ) -> None:
         assert layout.dtype in [torch.float, torch.float16, torch.bfloat16]
         super().__init__("mha", input_nodes, layout, parallel_num_threads())
@@ -329,7 +331,13 @@ class CppMHATemplate(CppTemplate):
         self.mask_mod = mask_mod
         self.kv_block_size = kv_block_size
         self.has_other_buffer=has_other_buffer
+        self.fake_buffers = fake_buffers
+
     def modification(self, subgraph_buffer):
+        if self.has_other_buffer:
+            score_other_buf_name = self.input_nodes[4].get_name()
+            mask_other_buf_name = self.input_nodes[5].get_name()
+
         assert isinstance(subgraph_buffer, ir.ComputedBuffer)
         subgraph_buffer_data = subgraph_buffer.data
         from ..loop_body import LoopBody
@@ -342,13 +350,17 @@ class CppMHATemplate(CppTemplate):
         from .cpp import CppKernel, CppKernelProxy, KernelGroup
         kernel_group = KernelGroup()
         kernel_input_args = {
-            "arg0_1": "in_ptr0",
-            "arg1_1": "in_ptr1",
-            "arg2_1": "in_ptr2",
-            "arg3_1": "in_ptr3",
-            "arg10_1": "in_ptr10",
-            "arg4_1": "in_ptr4",
+            "score": "in_ptr0",
+            "b": "in_ptr1",
+            "h": "in_ptr2",
+            "q_idx": "in_ptr3",
+            "kv_idx": "in_ptr4",
         }
+        if self.has_other_buffer:
+            kernel_input_args.update({
+                score_other_buf_name: "in_ptr5",
+                mask_other_buf_name: "in_ptr5",
+            })
 
         kernel_output_args = {
             "buf0": "out_ptr0"
@@ -404,6 +416,7 @@ class CppMHATemplate(CppTemplate):
         mask_mod,
         kv_block_size,
         has_other_buffer,
+        fake_buffers,
     ):
         def preprocessor(input_nodes, layout):
             return input_nodes, layout
@@ -422,6 +435,7 @@ class CppMHATemplate(CppTemplate):
             mask_mod=mask_mod,
             kv_block_size=kv_block_size,
             has_other_buffer=has_other_buffer,
+            fake_buffers=fake_buffers,
         )
         template.maybe_append_choice(choices)
         return template
@@ -500,4 +514,8 @@ class CppMHATemplate(CppTemplate):
             mask_mod=self.mask_mod,
         )
         with contextlib.ExitStack() as stack:
+            for buf in self.fake_buffers:
+                stack.enter_context(
+                    patch.object(V.graph, "get_dtype", self._fake_get_dtype(buf))
+                )            
             return self._template_from_string(ATTENTION_TEMPLATE).render(**options)
