@@ -1,4 +1,5 @@
 # mypy: allow-untyped-defs
+import re
 import contextlib
 import logging
 from typing import List, Optional
@@ -193,8 +194,8 @@ ATTENTION_TEMPLATE = r"""
                 {%- if mask_mod_other_buffers %}
                     auto in_ptr5 = mask_other;
                 {%- endif %}
-                accum_t* out_ptr0 = in_ptr0;
-                {{template.modification(score_mod, 0)}}
+                accum_t* out_ptr{{score_buf_idx}} = in_ptr0;
+                {{template.modification(score_mod, score_buf_name, score_buf_idx)}}
                 }
             }
             // Apply block mask, fill unused with -inf
@@ -217,9 +218,9 @@ ATTENTION_TEMPLATE = r"""
                     auto in_ptr5 = mask_other;
                 {%- endif %}
                 std::vector<int64_t> temp = {0};
-                int64_t* out_ptr1 = temp.data();
-                {{template.modification(mask_mod, 1)}}
-                *qk_block = *out_ptr1!=0 ?  *qk_block : -std::numeric_limits<accum_t>::infinity();
+                int64_t* out_ptr{{mask_buf_idx}} = temp.data();
+                {{template.modification(mask_mod, mask_buf_name, mask_buf_idx)}}
+                *qk_block = *out_ptr{{mask_buf_idx}}!=0 ?  *qk_block : -std::numeric_limits<accum_t>::infinity();
                 }
             }
             {%- endif %}      
@@ -324,6 +325,16 @@ class CppMHATemplate(CppTemplate):
         self.scale = scale
         self.score_mod = score_mod
         self.mask_mod = mask_mod
+        self.score_buf_name = V.graph.register_buffer(self.score_mod)
+        self.mask_buf_name = V.graph.register_buffer(self.mask_mod)
+
+        def get_idx(buf_name):
+            match = re.search(r'\d+', buf_name)
+            assert match, f"incorrect score buf name: {buf_name}"
+            return match.group()
+
+        self.score_buf_idx = get_idx(self.score_buf_name)
+        self.mask_buf_idx = get_idx(self.mask_buf_name)
         self.kv_block_size = kv_block_size
         self.has_other_buffer=has_other_buffer
         self.no_full_kv_block=no_full_kv_block
@@ -332,7 +343,7 @@ class CppMHATemplate(CppTemplate):
             self.other_buffer_input_offset = 0
         self.fake_buffers = fake_buffers
 
-    def modification(self, subgraph_buffer, output_idx):
+    def modification(self, subgraph_buffer, output_name, output_idx):
         if self.has_other_buffer:
             score_other_buf_name = self.input_nodes[5 + self.other_buffer_input_offset].get_name()
             mask_other_buf_name = self.input_nodes[6 + self.other_buffer_input_offset].get_name()
@@ -342,9 +353,6 @@ class CppMHATemplate(CppTemplate):
         from ..loop_body import LoopBody
         from ..utils import sympy_index_symbol_with_prefix, SymT
         from ..virtualized import ops, V
-
-        output_name = f"buf{output_idx}"   
-        V.graph.register_buffer(subgraph_buffer)
 
         from .cpp import CppKernel, CppKernelProxy, KernelGroup
         kernel_group = KernelGroup()
@@ -362,7 +370,7 @@ class CppMHATemplate(CppTemplate):
             })
 
         kernel_output_args = {
-            f"buf{output_idx}" : f"out_ptr{output_idx}"
+            output_name: f"out_ptr{output_idx}"
         }
 
         args = kernel_group.args
@@ -513,6 +521,10 @@ class CppMHATemplate(CppTemplate):
             num_thread=num_threads,
             score_mod=self.score_mod,
             mask_mod=self.mask_mod,
+            score_buf_name=self.score_buf_name,
+            mask_buf_name=self.mask_buf_name,
+            score_buf_idx=self.score_buf_idx,
+            mask_buf_idx=self.mask_buf_idx,
         )
         with contextlib.ExitStack() as stack:
             for buf in self.fake_buffers:
