@@ -89,6 +89,7 @@ ATTENTION_TEMPLATE = r"""
       }
     }
   }
+  //TODO: double check here
   bool is_page_attention = false;
   if(block_num_kvi != total_kv_num_blocks &&  batchSize_k == 1 ){
     is_page_attention=true;
