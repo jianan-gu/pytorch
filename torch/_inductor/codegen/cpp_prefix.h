@@ -59,63 +59,27 @@ struct Welford {
   uint64_t index = 0;
 };
 
-// out = val * a + b
-// is_b_stride_zero: If the stride of b is 0 (mask broadcasting case),
-//                take b as a scalar pointer.
-#if __GNUC__ == 11 && defined(__ARM_FEATURE_SVE)
-template <typename T1, typename T2>
-inline void _scale_attn_mask_fusion_kernel(
-    T1* a,
-    T2* b,
-    const int& size,
-    T1* out,
-    T1& val,
-    bool is_b_stride_zero) {
-#else
-template <bool is_b_stride_zero, typename T1, typename T2>
-inline void _scale_attn_mask_fusion_kernel(
-    T1* a,
-    T2* b,
-    const int& size,
-    T1* out,
-    T1& val) {
-#endif
-  const auto vec_size1 = at::vec::Vectorized<T1>::size();
-  const auto vec_size2 = at::vec::Vectorized<T2>::size();
-  constexpr int64_t T1_n =
-      (vec_size2 == vec_size1 * 2 && std::is_reduced_floating_point_v<T2>) ? 2 : 1;
-  constexpr int64_t T2_n = 1;
-  auto vec_scale = at::vec::VectorizedN<T1, T1_n>(val);
-  int64_t i = 0;
-  for (; i < size - (size % vec_size2); i += vec_size2) {
-    auto a_n = at::vec::VectorizedN<T1, T1_n>::loadu(a + i);
-    at::vec::VectorizedN<T2, T2_n> b_n;
-#if __GNUC__ == 11 && defined(__ARM_FEATURE_SVE)
-    if (is_b_stride_zero) {
-#else
-    if constexpr(is_b_stride_zero) {
-#endif
-      b_n = at::vec::VectorizedN<T2, T2_n>((T1)b[0]);
-    } else {
-      b_n = at::vec::VectorizedN<T2, T2_n>::loadu(b + i);
-    }
-    auto b_n_convert = at::vec::convert<T1, T1_n, T2, T2_n, true>(b_n);
-    auto res = a_n * vec_scale + b_n_convert;
-    res.store(out + i);
-  }
-  for (; i < size; i++) {
-    auto tmp0 = a[i];
-    T1 tmp1;
-#if __GNUC__ == 11 && defined(__ARM_FEATURE_SVE)
-    if (is_b_stride_zero) {
-#else
-    if constexpr(is_b_stride_zero) {
-#endif
-      tmp1 = (T1)b[0];
-    } else {
-      tmp1 = (T1)b[i];
-    }
-    out[i] = tmp0 * val + tmp1;
+// block may be padding with 0.0 if sequence lenghth is not divable by block size
+// we need to mask those padding 0.0 with -inf in attention weights.
+template <typename T>
+inline void _block_padding_mask_kernel(T* a, const int& size){
+  auto vec_size = at::vec::Vectorized<T>::size();
+  for(int i=0; i<size; i+=vec_size)
+  {
+      auto tmp0 = at::vec::Vectorized<T>::loadu(a + i, vec_size);
+      if(std::is_same_v<T, at::BFloat16> || std::is_same_v<T, at::Half>){
+          tmp0 = at::vec::convert<float>(tmp0);
+      }
+      auto tmp1 = static_cast<float>(0.0);
+      auto tmp2 = at::vec::Vectorized<float>(tmp1);
+      auto tmp3 = at::vec::VecMask<float, 1>(tmp0 == tmp2);
+      auto tmp4 = -std::numeric_limits<float>::infinity();
+      auto tmp5 = at::vec::Vectorized<float>(tmp4);
+      auto tmp6 = decltype(tmp5)::blendv(tmp0, tmp5, tmp3.template cast<float, 1>());
+      if(std::is_same_v<T, at::BFloat16> || std::is_same_v<T, at::Half>){
+        tmp6 = at::vec::convert<T>(tmp6);
+      }
+      tmp6.store(a + i, vec_size);
   }
 }
 

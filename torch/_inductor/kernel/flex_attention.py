@@ -820,7 +820,12 @@ def flex_attention(
             stride=out_strides,
         )
         choices: List[Any] = []
-        input_nodes = [query, key, value, kv_num_blocks, kv_indices, full_kv_num_blocks]
+        input_nodes = [query, key, value, kv_num_blocks, kv_indices]
+        if not full_kv_num_blocks:
+            no_full_kv_block = True
+        else:
+            no_full_kv_block = False
+            input_nodes += [full_kv_num_blocks]
         has_other_buffer=False
         if score_mod_other_buffers and mask_mod_other_buffers:
             assert len(score_mod_other_buffers) == 1
@@ -837,6 +842,7 @@ def flex_attention(
             mask_mod=None if skip_mask_score else mask_graph_buffer,
             kv_block_size=seq_len_kv if SPARSE_KV_BLOCK_SIZE == 1073741824 else SPARSE_KV_BLOCK_SIZE,
             has_other_buffer=has_other_buffer,
+            no_full_kv_block=no_full_kv_block,
             fake_buffers=fake_buffers,
         )
         inputs_for_autotuning = [

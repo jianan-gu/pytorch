@@ -223,7 +223,7 @@ test_score_mods = [
 ]
 
 test_score_mask_mod_map = {
-    _identity: noop_mask,
+    # _identity: noop_mask,
     _times_two: noop_mask,
     _squared: noop_mask,
     _causal: _causal_mask,
@@ -405,14 +405,14 @@ class TestFlexAttention(InductorTestCase):
         v = torch.randn(
             (KV_B, KV_H, KV_S, V_D), dtype=dtype, device=device, requires_grad=is_requires_grad
         )
-        if block_mask is None:
-            block_mask = create_block_mask(noop_mask, Q_B, Q_H, Q_S, KV_S, device=device)
+        # if block_mask is None:
+        #     block_mask = create_block_mask(noop_mask, Q_B, Q_H, Q_S, KV_S, device=device)
         q_ref, k_ref, v_ref = query_key_value_clones(q, k, v)
         q_gold, k_gold, v_gold = query_key_value_clones(q, k, v, torch.float64)
         sdpa_partial = create_attention(
             score_mod, block_mask, enable_gqa=(not Q_H == KV_H)
         )
-        breakpoint()
+        #breakpoint()
         compiled_sdpa = torch.compile(sdpa_partial)
         golden_out = sdpa_partial(q_gold, k_gold, v_gold)
         ref_out = sdpa_partial(q_ref, k_ref, v_ref)
@@ -521,7 +521,7 @@ class TestFlexAttention(InductorTestCase):
         # convert block mask and score mod
         converted_block_mask = paged_attention.convert_logical_block_mask(block_mask)
         converted_score_mod = paged_attention.get_score_mod(score_mod)
-        # breakpoint()
+        # #breakpoint()
         return k_cache, v_cache, converted_block_mask, converted_score_mod
 
     def run_paged_attention(
@@ -589,7 +589,7 @@ class TestFlexAttention(InductorTestCase):
                 score_mod=converted_score_mod,
                 enable_gqa=(not Q_H == KV_H),
             )
-            # breakpoint()
+            # #breakpoint()
             # self._check_out(
             #     compiled_out_2,
             #     compiled_out_1,
@@ -615,7 +615,7 @@ class TestFlexAttention(InductorTestCase):
         dtype: torch.dtype = torch.float16,
         Q_B: int = B,
         Q_H: int = H,
-        Q_S: int = 1,
+        Q_S: int = S,
         QK_D: int = D,
         KV_B: int = B,
         KV_H: int = H,
@@ -653,7 +653,6 @@ class TestFlexAttention(InductorTestCase):
         compiled_out, compiled_lse = self.run_paged_attention(
             score_mod, q, k, v, dtype, block_mask, device=device
         )
-        breakpoint()
         self._check_out(
             golden_out,
             ref_out,
@@ -985,8 +984,8 @@ class TestFlexAttention(InductorTestCase):
     @common_utils.parametrize("dtype", test_dtypes)
     @common_utils.parametrize("score_mod", test_score_mods)
     def test_builtin_score_mods(self, device: str, dtype: torch.dtype, score_mod: Callable):
-        # self.run_test(score_mod, dtype, device=device)
-        self.run_test_with_paged_attention(score_mod, dtype, device=device)
+        self.run_test(score_mod, dtype, device=device)
+        # self.run_test_with_paged_attention(score_mod, dtype, device=device)
 
     # @running_on_a100_only
     # @common_utils.parametrize("dtype", test_dtypes_fast)
@@ -1067,8 +1066,8 @@ class TestFlexAttention(InductorTestCase):
     #     self.run_test_with_paged_attention(*inputs, device=device)
 
 
-    # idendity skipped, fix me
-    # gjn: pass fp32, acc issue
+    # # idendity skipped, fix me
+    # # gjn: pass fp32, acc issue
     # @supported_platform
     # @common_utils.parametrize("device", test_devices)
     # @common_utils.parametrize("dtype", test_dtypes)

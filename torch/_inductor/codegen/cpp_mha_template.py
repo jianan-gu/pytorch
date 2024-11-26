@@ -85,7 +85,7 @@ ATTENTION_TEMPLATE = r"""
     is_page_attention=true;
   }
   int64_t kvSize = is_page_attention ? total_kv_num_blocks*kvBlockSize : {{kernel.size(key, 1)}};
-
+ 
   qSplitSize = qSplitSize > qSize ? qSize : qSplitSize;
   kvSplitSize = kvSplitSize > kvSize ? kvSize : kvSplitSize;
   int64_t qSlice = (qSize + qSplitSize - 1) / qSplitSize;
@@ -140,6 +140,7 @@ ATTENTION_TEMPLATE = r"""
 
             // Calculate scale * q @ k.T
             auto k_addr = k_data + i * kStrideB + j * kStrideH + n  * kStrideN;
+
             {%- if kv_indices %}
             auto kv_block_num = n / kvBlockSize;
             auto kv_block_offset = n - kv_block_num * kvBlockSize;
@@ -170,14 +171,7 @@ ATTENTION_TEMPLATE = r"""
               qk_data,
               cur_kvSplitSize);
 
-            // TODO: vec me !
-            for (int64_t row = 0; row < cur_qSplitSize; ++row) {
-              for(int col = 0; col< cur_kvSplitSize; col++){
-                if (*(qk_data + row * cur_kvSplitSize + col) == 0.0){
-                    *(qk_data + row * cur_kvSplitSize + col) = -std::numeric_limits<accum_t>::infinity();
-                }
-              }
-            }
+            _block_padding_mask_kernel<accum_t>(qk_data, cur_qSplitSize*cur_kvSplitSize);
 
             {%- if score_mod and mask_mod %}
             // apply score mod function
@@ -197,10 +191,10 @@ ATTENTION_TEMPLATE = r"""
                 auto in_ptr3 = q_idx.data();
                 auto in_ptr4 = kv_idx.data();
                 {%- if mask_mod_other_buffers %}
-                auto in_ptr5 = mask_other;
+                    auto in_ptr5 = mask_other;
                 {%- endif %}
                 accum_t* out_ptr0 = in_ptr0;
-                {{template.modification(score_mod)}}
+                {{template.modification(score_mod, 0)}}
                 }
             }
             // Apply block mask, fill unused with -inf
@@ -220,12 +214,12 @@ ATTENTION_TEMPLATE = r"""
                 auto in_ptr3 = q_idx.data();
                 auto in_ptr4 = kv_idx.data();
                 {%- if mask_mod_other_buffers %}
-                auto in_ptr5 = mask_other;
-                {%- endif %}                
+                    auto in_ptr5 = mask_other;
+                {%- endif %}
                 std::vector<int64_t> temp = {0};
-                int64_t* out_ptr0 = temp.data();
-                {{template.modification(mask_mod)}}
-                *qk_block = *out_ptr0!=0 ?  *qk_block : -std::numeric_limits<accum_t>::infinity();
+                int64_t* out_ptr1 = temp.data();
+                {{template.modification(mask_mod, 1)}}
+                *qk_block = *out_ptr1!=0 ?  *qk_block : -std::numeric_limits<accum_t>::infinity();
                 }
             }
             {%- endif %}      
@@ -322,6 +316,7 @@ class CppMHATemplate(CppTemplate):
         mask_mod,
         kv_block_size,
         has_other_buffer,
+        no_full_kv_block,
         fake_buffers,
     ) -> None:
         assert layout.dtype in [torch.float, torch.float16, torch.bfloat16]
@@ -331,12 +326,16 @@ class CppMHATemplate(CppTemplate):
         self.mask_mod = mask_mod
         self.kv_block_size = kv_block_size
         self.has_other_buffer=has_other_buffer
+        self.no_full_kv_block=no_full_kv_block
+        self.other_buffer_input_offset = 1
+        if self.no_full_kv_block:
+            self.other_buffer_input_offset = 0
         self.fake_buffers = fake_buffers
 
-    def modification(self, subgraph_buffer):
+    def modification(self, subgraph_buffer, output_idx):
         if self.has_other_buffer:
-            score_other_buf_name = self.input_nodes[4].get_name()
-            mask_other_buf_name = self.input_nodes[5].get_name()
+            score_other_buf_name = self.input_nodes[5 + self.other_buffer_input_offset].get_name()
+            mask_other_buf_name = self.input_nodes[6 + self.other_buffer_input_offset].get_name()
 
         assert isinstance(subgraph_buffer, ir.ComputedBuffer)
         subgraph_buffer_data = subgraph_buffer.data
@@ -344,7 +343,7 @@ class CppMHATemplate(CppTemplate):
         from ..utils import sympy_index_symbol_with_prefix, SymT
         from ..virtualized import ops, V
 
-        output_name = "buf0"     
+        output_name = f"buf{output_idx}"   
         V.graph.register_buffer(subgraph_buffer)
 
         from .cpp import CppKernel, CppKernelProxy, KernelGroup
@@ -363,7 +362,7 @@ class CppMHATemplate(CppTemplate):
             })
 
         kernel_output_args = {
-            "buf0": "out_ptr0"
+            f"buf{output_idx}" : f"out_ptr{output_idx}"
         }
 
         args = kernel_group.args
@@ -416,6 +415,7 @@ class CppMHATemplate(CppTemplate):
         mask_mod,
         kv_block_size,
         has_other_buffer,
+        no_full_kv_block,
         fake_buffers,
     ):
         def preprocessor(input_nodes, layout):
@@ -435,6 +435,7 @@ class CppMHATemplate(CppTemplate):
             mask_mod=mask_mod,
             kv_block_size=kv_block_size,
             has_other_buffer=has_other_buffer,
+            no_full_kv_block=no_full_kv_block,
             fake_buffers=fake_buffers,
         )
         template.maybe_append_choice(choices)
@@ -496,9 +497,9 @@ class CppMHATemplate(CppTemplate):
             value=value,
             kv_num_blocks=self.input_nodes[3],
             kv_indices=self.input_nodes[4],
-            full_kv_num_blocks=self.input_nodes[5],
-            score_mod_other_buffers=self.input_nodes[6] if self.has_other_buffer else None,
-            mask_mod_other_buffers=self.input_nodes[7] if self.has_other_buffer else None,
+            full_kv_num_blocks=self.input_nodes[5] if not self.no_full_kv_block else None,
+            score_mod_other_buffers=self.input_nodes[5 + self.other_buffer_input_offset] if self.has_other_buffer else None,
+            mask_mod_other_buffers=self.input_nodes[6 + self.other_buffer_input_offset] if self.has_other_buffer else None,
             scale=self.scale,
             accumulate_dtype=torch.float,
             query_dtype=query.layout.dtype,
