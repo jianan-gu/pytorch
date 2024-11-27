@@ -548,25 +548,6 @@ class TestFlexAttention(InductorTestCase):
             score_mod, q, k, v, block_mask, dtype, block_mask.BLOCK_SIZE[1], device=device
         )
         
-        # compiled_sdpa1 = flex_attention
-        # compiled_out_1 = compiled_sdpa1(
-        #     q,
-        #     k_cache,
-        #     v_cache,
-        #     return_lse=False,
-        #     block_mask=converted_block_mask,
-        #     score_mod=converted_score_mod,
-        #     enable_gqa=(not Q_H == KV_H),
-        # )
-        # compiled_out_2 = compiled_sdpa1(
-        #     q.to(torch.float64),
-        #     k_cache.to(torch.float64),
-        #     v_cache.to(torch.float64),
-        #     return_lse=False,
-        #     block_mask=converted_block_mask,
-        #     score_mod=converted_score_mod,
-        #     enable_gqa=(not Q_H == KV_H),
-        # )
         compiled_sdpa = torch.compile(flex_attention)
 
         # compute
@@ -583,13 +564,6 @@ class TestFlexAttention(InductorTestCase):
                 score_mod=converted_score_mod,
                 enable_gqa=(not Q_H == KV_H),
             )
-            # #breakpoint()
-            # self._check_out(
-            #     compiled_out_2,
-            #     compiled_out_1,
-            #     compiled_out,
-            #     is_paged_attention=True,
-            # )
            
         else:
             compiled_out, compiled_lse = compiled_sdpa(

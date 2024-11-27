@@ -837,6 +837,15 @@ def flex_attention(
             input_nodes += [score_mod_other_buffers[0], mask_mod_other_buffers[0]]
             has_other_buffer=True
         skip_mask_score = kernel_options.get("SKIP_MASK_SCORE", False)
+        # Mark SPARSE_KV_BLOCK_SIZE & SPARSE_Q_BLOCK_SIZE as static shapes and add guards.
+        SPARSE_KV_BLOCK_SIZE = V.graph.sizevars.evaluate_static_shape(SPARSE_KV_BLOCK_SIZE)
+        SPARSE_Q_BLOCK_SIZE = V.graph.sizevars.evaluate_static_shape(SPARSE_Q_BLOCK_SIZE)
+        assert V.graph.sizevars.evaluate_expr(
+            sympy.Le(seq_len_q, sympy.Mul(kv_indices.get_size()[-2], SPARSE_Q_BLOCK_SIZE))
+        ), "Q seqlen must be smaller than the block_mask size in the Q dimension, considering pass a larger block_mask."
+        assert V.graph.sizevars.evaluate_expr(
+            sympy.Le(seq_len_kv, sympy.Mul(kv_indices.get_size()[-1], SPARSE_KV_BLOCK_SIZE))
+        ), "KV seqlen must be smaller than the block_mask size in the KV dimension, considering pass a larger block_mask."
         CppMHATemplate.add_choices(
             choices=choices,
             input_nodes=input_nodes,
@@ -844,7 +853,7 @@ def flex_attention(
             scale=scale,
             score_mod=None if skip_mask_score else subgraph_buffer,
             mask_mod=None if skip_mask_score else mask_graph_buffer,
-            kv_block_size=seq_len_kv if V.graph.sizevars.symbolic_hint(SPARSE_KV_BLOCK_SIZE) == 1073741824 else V.graph.sizevars.symbolic_hint(SPARSE_KV_BLOCK_SIZE),
+            kv_block_size=seq_len_kv if SPARSE_KV_BLOCK_SIZE == 1073741824 else SPARSE_KV_BLOCK_SIZE,
             has_other_buffer=has_other_buffer,
             no_full_kv_block=no_full_kv_block,
             fake_buffers=fake_buffers,
