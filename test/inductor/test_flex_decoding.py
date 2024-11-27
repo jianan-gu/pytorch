@@ -563,7 +563,6 @@ class TestFlexDecoding(InductorTestCase):
             golden_out,
             ref_out,
             compiled_out,
-            is_paged_attention=True,
         )
 
         if device == "cuda":
@@ -571,7 +570,6 @@ class TestFlexDecoding(InductorTestCase):
                 golden_lse,
                 ref_lse,
                 compiled_lse,
-                is_paged_attention=True,
             )
 
     def run_test_with_call_paged_attention(

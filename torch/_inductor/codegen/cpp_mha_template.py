@@ -41,6 +41,7 @@ ATTENTION_TEMPLATE = r"""
   int64_t headSize = {{kernel.size(query, 3)}};
   int64_t batchSize_k = {{kernel.size(key, 0)}};
   int64_t num_head_k = {{kernel.size(key, 2)}};
+  int64_t headSize_v = {{kernel.size(value, 3)}};
   bool is_broadcast_bs_kv = batchSize != batchSize_k;
   bool is_broadcast_head_kv = num_head != num_head_k;
   int64_t gqa_shards = num_head / num_head_k;
@@ -107,7 +108,7 @@ ATTENTION_TEMPLATE = r"""
         /* qk     */ qSplitSize * kvSplitSize +
         /* qk_max */ qSplitSize +
         /* qk_sum */ qSplitSize +
-        /* dst    */ qSplitSize * headSize;
+        /* dst    */ qSplitSize * headSize_v;
 
   {%- set acc_buf_name = "buf" %}
       {{kernel.define_buffer(acc_buf_name, [num_thread, size_per_thread], dtype=accumulate_dtype)}}
@@ -268,9 +269,9 @@ ATTENTION_TEMPLATE = r"""
                 if (n > 0) {
                   at::vec::map<accum_t>(
                     [exp_tmp](Vec x) { return x * Vec(exp_tmp); },
-                    dst_data + row * headSize,
-                    dst_data + row * headSize,
-                    headSize);
+                    dst_data + row * headSize_v,
+                    dst_data + row * headSize_v,
+                    headSize_v);
                 }
               }
             }
@@ -283,7 +284,7 @@ ATTENTION_TEMPLATE = r"""
             at::native::cpublas::gemm(
               at::native::TransposeType::NoTranspose,
               at::native::TransposeType::NoTranspose,
-              headSize,
+              headSize_v,
               cur_qSplitSize,
               cur_kvSplitSize,
               static_cast<accum_t>(1),
@@ -293,7 +294,7 @@ ATTENTION_TEMPLATE = r"""
               cur_kvSplitSize,
               n == 0 ? static_cast<accum_t>(0) : static_cast<accum_t>(1),
               dst_data,
-              headSize);
+              headSize_v);
           }
 
           // dst <- dst / sum[row]
@@ -308,8 +309,8 @@ ATTENTION_TEMPLATE = r"""
             at::vec::map<scalar_t>(
               [sum_reciprocal](Vec x) { return x * Vec(sum_reciprocal); },
               out_data + i * oStrideB + j * oStrideH + m * oStrideM + row * oStrideM,
-              dst_data + row * headSize,
-              headSize);
+              dst_data + row * headSize_v,
+              headSize_v);
           }
           // Move to the next query
       at::native::data_index_step(i, batchSize, j, num_head, k, qSlice);
@@ -481,7 +482,7 @@ class CppMHATemplate(CppTemplate):
 
         qSize = V.graph.sizevars.size_hints(query.get_size())[1]
         kvSize = V.graph.sizevars.size_hints(key.get_size())[1]
-        headSize = V.graph.sizevars.size_hints(query.get_size())[3]
+        headSize = V.graph.sizevars.size_hints(value.get_size())[3]
 
         if qSize >= 768:
             qSplitSize = 256

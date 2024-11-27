@@ -1990,7 +1990,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             return score
 
         self.run_test(bias_mod)
-    # gjn: fail on malloc
+
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     @common_utils.parametrize("score_mod", test_score_mods)
