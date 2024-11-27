@@ -467,8 +467,6 @@ class CppMHATemplate(CppTemplate):
         self,
         kernel,
         template_buffer_node: Optional[ir.CppTemplateBuffer] = None,
-        flag_template_buffer_has_other_users: Optional[bool] = None,
-        epilogue_nodes: Optional[List[ir.IRNode]] = None,
         **kwargs,
     ) -> str:
         # Query (Batch x Num_heads  x Q_seq_len  x Dim_per_head)
@@ -481,9 +479,9 @@ class CppMHATemplate(CppTemplate):
         key = kernel.permute(self.input_nodes[1], [0, 2, 1, 3])
         value = kernel.permute(self.input_nodes[2], [0, 2, 1, 3])
 
-        qSize = query.layout.size[1]
-        kvSize = key.layout.size[1]
-        headSize = query.layout.size[3]
+        qSize = V.graph.sizevars.size_hints(query.get_size())[1]
+        kvSize = V.graph.sizevars.size_hints(key.get_size())[1]
+        headSize = V.graph.sizevars.size_hints(query.get_size())[3]
 
         if qSize >= 768:
             qSplitSize = 256

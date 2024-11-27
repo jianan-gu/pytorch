@@ -778,7 +778,6 @@ def flex_attention(
         buffer_list = placeholder_inps + list(score_mod_other_buffers) + mask_graph_placeholder_inps + list(mask_mod_other_buffers)
         for item in buffer_list:
             fake_buffers.append(item.data.data)
-        
 
         (
             query,
@@ -809,8 +808,8 @@ def flex_attention(
         )
         score_mod_other_buffers = maybe_realize(score_mod_other_buffers)
         mask_mod_other_buffers = maybe_realize(mask_mod_other_buffers)
-        Bq, Hq, seq_len_q, qk_head_dim = query.get_size()
-        Bkv, Hkv, seq_len_kv, v_head_dim = value.get_size()
+        Bq, Hq, seq_len_q, qk_head_dim = V.graph.sizevars.size_hints(query.get_size())
+        Bkv, Hkv, seq_len_kv, v_head_dim = V.graph.sizevars.size_hints(value.get_size())
         B = Bq
 
         # Construct output layout with strides matching the query.
@@ -845,7 +844,7 @@ def flex_attention(
             scale=scale,
             score_mod=None if skip_mask_score else subgraph_buffer,
             mask_mod=None if skip_mask_score else mask_graph_buffer,
-            kv_block_size=seq_len_kv if SPARSE_KV_BLOCK_SIZE == 1073741824 else SPARSE_KV_BLOCK_SIZE,
+            kv_block_size=seq_len_kv if V.graph.sizevars.symbolic_hint(SPARSE_KV_BLOCK_SIZE) == 1073741824 else V.graph.sizevars.symbolic_hint(SPARSE_KV_BLOCK_SIZE),
             has_other_buffer=has_other_buffer,
             no_full_kv_block=no_full_kv_block,
             fake_buffers=fake_buffers,
