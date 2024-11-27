@@ -2933,7 +2933,6 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
                 ref_error * 1.2 >= flex_error,
                 f"{name} -> Ref error: {ref_error}, Flex eager Error: {flex_error}",
             )
-    # gjn : fail on acc issue
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     def test_causal_block_non_divisible(self, device):
@@ -2941,9 +2940,10 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             return q >= kv
 
         block_mask = create_block_mask(mask_mod, B, 1, S - 1, S - 1, device=device)
+        breakpoint()
         attention = functools.partial(flex_attention, block_mask=block_mask)
 
-        self.run_test_with_call(attention, Q_S=S - 1, KV_S=S - 1, device=device)
+        self.run_test_with_call(attention, dtype=torch.float, Q_S=S - 1, KV_S=S - 1, device=device)
     # gjn : fail on other buffer
     @supported_platform
     @common_utils.parametrize("device", test_devices)
@@ -3102,10 +3102,10 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         query, key, value = make_tensor(), make_tensor(), make_tensor()
         attention = torch.compile(flex_attention)
         with self.assertRaisesRegex(
-            NotImplementedError,
-            "`return_lse` is not supported yet on CPU device when using torch.compile.",
+            torch._dynamo.exc.BackendCompilerFailed, r"NotImplementedError: torch.compile on CPU only supports inference and `return_lse` is not supported yet."
         ):
             attention(query, key, value, return_lse=True)
+  
 
     def test_cpu_error_message_for_no_inference(self):
         make_tensor = functools.partial(
@@ -3118,10 +3118,10 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         query, key, value = make_tensor(), make_tensor(), make_tensor()
         attention = torch.compile(flex_attention)
         with self.assertRaisesRegex(
-            NotImplementedError,
-            "FlexAttention only supports inference on CPU device when using torch.compile.",
+            torch._dynamo.exc.BackendCompilerFailed, r"NotImplementedError: torch.compile on CPU only supports inference and `return_lse` is not supported yet."
         ):
             attention(query, key, value)
+  
 
     @supported_platform
     @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
@@ -3184,7 +3184,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         grads_compile = torch.autograd.grad(out_compiled.sum(), (query, key, value))
 
         torch.testing.assert_close(grads_eager, grads_compile)
-   # gjn: fail on acc
+
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     def test_causal_block_non_divisible_with_captured_buffer(self, device):

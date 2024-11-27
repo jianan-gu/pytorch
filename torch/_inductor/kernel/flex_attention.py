@@ -743,6 +743,11 @@ def flex_attention(
     ) = block_mask
     fake_buffers: List[ir.Buffer] = []
     if query.get_device().type == "cpu":
+        if kernel_options["OUTPUT_LOGSUMEXP"]:
+            raise NotImplementedError(
+                "torch.compile on CPU only supports inference and `return_lse` is not supported yet."
+            )
+
         placeholder_inps = [
             create_placeholder(name, dtype, query.get_device())
             for name, dtype in [

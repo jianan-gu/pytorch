@@ -94,6 +94,7 @@ ATTENTION_TEMPLATE = r"""
   if(block_num_kvi != total_kv_num_blocks &&  batchSize_k == 1 ){
     is_page_attention=true;
   }
+
   int64_t kvSize = is_page_attention ? total_kv_num_blocks*kvBlockSize : {{kernel.size(key, 1)}};
   
   qSplitSize = qSplitSize > qSize ? qSize : qSplitSize;
@@ -190,7 +191,7 @@ ATTENTION_TEMPLATE = r"""
               for(int col = 0; col< cur_kvSplitSize; col++){
                 std::vector<int64_t> b_idx = {i};
                 std::vector<int64_t> h_idx = {j};
-                std::vector<int64_t> q_idx = {k*cur_qSplitSize+row};
+                std::vector<int64_t> q_idx = {m+row};
                 int64_t phisical_kv_idx = n+col;
                 if(is_page_attention){
                     phisical_kv_idx= *kv_logical_data * kvBlockSize + col;
@@ -213,7 +214,7 @@ ATTENTION_TEMPLATE = r"""
               for(int col = 0; col< cur_kvSplitSize; col++){
                 std::vector<int64_t> b_idx = {i};
                 std::vector<int64_t> h_idx = {j};
-                std::vector<int64_t> q_idx = {k*cur_qSplitSize+row};
+                std::vector<int64_t> q_idx = {m+row};
                 int64_t phisical_kv_idx = n+col;
                 if(is_page_attention){
                     phisical_kv_idx= *kv_logical_data * kvBlockSize + col;
