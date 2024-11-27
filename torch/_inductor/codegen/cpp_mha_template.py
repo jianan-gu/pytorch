@@ -20,7 +20,18 @@ ATTENTION_TEMPLATE = r"""
 {{template.header().getvalue()}}
 #include <ATen/native/CPUBlas.h>
 
-{%- set kernel_args = {"query": query, "key": key, "value": value, "kv_num_blocks": kv_num_blocks, "kv_indices": kv_indices, "full_kv_num_blocks": full_kv_num_blocks,  "mask_other": mask_mod_other_buffers} %}
+{%- set kernel_args = {"query": query, "key": key, "value": value, "kv_num_blocks": kv_num_blocks, "kv_indices": kv_indices, "full_kv_num_blocks": full_kv_num_blocks} %}
+{%- if score_mod_other_buffers is not none %}
+{%- for i in range(score_mod_other_buffers | length) %}
+{%- set _ = kernel_args.update({"score_others_" ~ i: score_mod_other_buffers[i]}) %}
+{%- endfor %}
+{%- endif %}
+
+{%- if mask_mod_other_buffers is not none %}
+{%- for i in range(mask_mod_other_buffers | length) %}
+{%- set _ = kernel_args.update({"mask_others_" ~ i: mask_mod_other_buffers[i]}) %}
+{%- endfor %}
+{%- endif %}
 {{kernel.def_kernel(inputs=kernel_args, outputs={"output": output})}}
 {
   // kv block size, q and kv split size
@@ -201,9 +212,7 @@ ATTENTION_TEMPLATE = r"""
                 auto in_ptr2 = h_idx.data();
                 auto in_ptr3 = q_idx.data();
                 auto in_ptr4 = kv_idx.data();
-                {%- if mask_mod_other_buffers %}
-                    auto in_ptr5 = mask_other;
-                {%- endif %}
+                {{template.generate_other_buffer("score_others", 5, 0, "len_score_other", kernel.args)}}
                 accum_t* out_ptr{{score_buf_idx}} = in_ptr0;
                 {{template.modification(score_mod, score_buf_name, score_buf_idx)}}
                 }
@@ -224,9 +233,7 @@ ATTENTION_TEMPLATE = r"""
                 auto in_ptr2 = h_idx.data();
                 auto in_ptr3 = q_idx.data();
                 auto in_ptr4 = kv_idx.data();
-                {%- if mask_mod_other_buffers %}
-                    auto in_ptr5 = mask_other;
-                {%- endif %}
+                {{template.generate_other_buffer("mask_others", 5, -1, "len_mask_other", kernel.args)}}
                 std::vector<int64_t> temp = {0};
                 int64_t* out_ptr{{mask_buf_idx}} = temp.data();
                 {{template.modification(mask_mod, mask_buf_name, mask_buf_idx)}}
@@ -329,6 +336,9 @@ class CppMHATemplate(CppTemplate):
         has_other_buffer,
         no_full_kv_block,
         fake_buffers,
+        len_score_other,
+        len_mask_other,
+        other_buffer_name_to_buffer,
     ) -> None:
         assert layout.dtype in [torch.float, torch.float16, torch.bfloat16]
         super().__init__("mha", input_nodes, layout, parallel_num_threads())
@@ -352,11 +362,50 @@ class CppMHATemplate(CppTemplate):
         if self.no_full_kv_block:
             self.other_buffer_input_offset = 0
         self.fake_buffers = fake_buffers
+        self.len_score_other = len_score_other
+        self.len_mask_other = len_mask_other
+        self.other_buffer_name_to_buffer = other_buffer_name_to_buffer
+        self.score_mod_other_buffers = self.input_nodes[5 + self.other_buffer_input_offset:5 + self.other_buffer_input_offset + self.len_score_other] if self.has_other_buffer else None
+        self.mask_mod_other_buffers=self.input_nodes[5 + self.other_buffer_input_offset + self.len_score_other:] if self.has_other_buffer else None
+        # TODO: is this needed to be set to self?
+        self.other_ptr_to_name = {}
+        
+        self.other_ptr_to_arg = {}
+
+    def generate_other_buffer(self, buf_list, start_ptr, start_offset, len_attr, kernel_args):
+        # TODO: remove duplicated code
+        def get_arg(name):
+            return self.other_buffer_name_to_buffer.get(name)
+
+        def get_arg_name(name):
+            arg = self.other_buffer_name_to_buffer.get(name)
+            return kernel_args.input_buffers.get(arg)
+        
+        if self.has_other_buffer:
+            if start_offset == -1:
+                start_offset = getattr(self, len_attr)
+            
+            # TODO: remove dupliacted code
+            for i in range(getattr(self, len_attr)):
+                if f"in_ptr{start_ptr + start_offset + i}" not in self.other_ptr_to_name:
+                    self.other_ptr_to_name.update({f"in_ptr{start_ptr + start_offset + i}": f"{get_arg_name(f'{buf_list}_{i}')}"})
+            
+            for i in range(getattr(self, len_attr)):
+                if f"in_ptr{start_ptr + start_offset + i}" not in self.other_ptr_to_arg:
+                    self.other_ptr_to_arg.update({f"in_ptr{start_ptr + start_offset + i}": f"{get_arg(f'{buf_list}_{i}')}"})
+
+            return "\n".join(
+                f"auto {ptr} = {name};"
+                for ptr, name in self.other_ptr_to_name.items()
+            )
+        else:
+            return ""
 
     def modification(self, subgraph_buffer, output_name, output_idx):
         if self.has_other_buffer:
-            score_other_buf_name = self.input_nodes[5 + self.other_buffer_input_offset].get_name()
-            mask_other_buf_name = self.input_nodes[6 + self.other_buffer_input_offset].get_name()
+            # TODO: fix indices
+            score_other_buf_names = [item.get_name() for item in self.input_nodes[5 + self.other_buffer_input_offset:5 + self.other_buffer_input_offset + self.len_score_other]]
+            mask_other_buf_names = [item.get_name() for item in self.input_nodes[5 + self.other_buffer_input_offset + self.len_score_other:]]
 
         assert isinstance(subgraph_buffer, ir.ComputedBuffer)
         subgraph_buffer_data = subgraph_buffer.data
@@ -374,9 +423,10 @@ class CppMHATemplate(CppTemplate):
             "kv_idx": "in_ptr4",
         }
         if self.has_other_buffer:
+            start_ptr = 5
             kernel_input_args.update({
-                score_other_buf_name: "in_ptr5",
-                mask_other_buf_name: "in_ptr5",
+                name: ptr 
+                for ptr, name in self.other_ptr_to_arg.items()
             })
 
         kernel_output_args = {
@@ -435,6 +485,9 @@ class CppMHATemplate(CppTemplate):
         has_other_buffer,
         no_full_kv_block,
         fake_buffers,
+        len_score_other,
+        len_mask_other,
+        other_buffer_name_to_buffer,
     ):
         def preprocessor(input_nodes, layout):
             return input_nodes, layout
@@ -455,6 +508,9 @@ class CppMHATemplate(CppTemplate):
             has_other_buffer=has_other_buffer,
             no_full_kv_block=no_full_kv_block,
             fake_buffers=fake_buffers,
+            len_score_other=len_score_other,
+            len_mask_other=len_mask_other,
+            other_buffer_name_to_buffer=other_buffer_name_to_buffer,
         )
         template.maybe_append_choice(choices)
         return template
@@ -516,8 +572,8 @@ class CppMHATemplate(CppTemplate):
             kv_num_blocks=self.input_nodes[3],
             kv_indices=self.input_nodes[4],
             full_kv_num_blocks=self.input_nodes[5] if not self.no_full_kv_block else None,
-            score_mod_other_buffers=self.input_nodes[5 + self.other_buffer_input_offset] if self.has_other_buffer else None,
-            mask_mod_other_buffers=self.input_nodes[6 + self.other_buffer_input_offset] if self.has_other_buffer else None,
+            score_mod_other_buffers=self.score_mod_other_buffers,
+            mask_mod_other_buffers=self.mask_mod_other_buffers,
             scale=self.scale,
             accumulate_dtype=torch.float,
             query_dtype=query.layout.dtype,

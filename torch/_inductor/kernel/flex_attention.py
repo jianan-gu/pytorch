@@ -827,11 +827,21 @@ def flex_attention(
             no_full_kv_block = False
             input_nodes += [full_kv_num_blocks]
         has_other_buffer=False
-        if score_mod_other_buffers and mask_mod_other_buffers:
-            assert len(score_mod_other_buffers) == 1
-            assert len(mask_mod_other_buffers) == 1
-            input_nodes += [score_mod_other_buffers[0], mask_mod_other_buffers[0]]
+        other_buffer_name_to_buffer = {}
+        if score_mod_other_buffers or mask_mod_other_buffers:
+            # assert len(score_mod_other_buffers) == 1
+            # assert len(mask_mod_other_buffers) == 1
+            other_buffers = [*score_mod_other_buffers, *mask_mod_other_buffers]
+            input_nodes += other_buffers
             has_other_buffer=True
+            
+            other_buffer_name_to_buffer.update({
+                f"score_others_{i}": buf.get_name() for i, buf in enumerate(score_mod_other_buffers)
+            })
+            other_buffer_name_to_buffer.update({
+                f"mask_others_{i}": buf.get_name() for i, buf in enumerate(mask_mod_other_buffers)
+            })            
+
         skip_mask_score = kernel_options.get("SKIP_MASK_SCORE", False)
         CppMHATemplate.add_choices(
             choices=choices,
@@ -844,6 +854,9 @@ def flex_attention(
             has_other_buffer=has_other_buffer,
             no_full_kv_block=no_full_kv_block,
             fake_buffers=fake_buffers,
+            len_score_other=len(score_mod_other_buffers),
+            len_mask_other=len(mask_mod_other_buffers),
+            other_buffer_name_to_buffer=other_buffer_name_to_buffer,
         )
         inputs_for_autotuning = [
             query,
