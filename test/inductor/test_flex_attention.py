@@ -34,7 +34,7 @@ from torch.testing import FileCheck
 from torch.testing._internal import common_utils
 from torch.testing._internal.common_cuda import PLATFORM_SUPPORTS_BF16, TEST_MULTIGPU
 from torch.testing._internal.common_device_type import (
-    flex_attention_supported_platform as supported_platform, onlyCUDA
+    flex_attention_supported_platform as supported_platform
 )
 from torch.testing._internal.common_utils import TEST_WITH_ROCM
 from torch.utils._triton import has_triton
@@ -1246,7 +1246,6 @@ class TestFlexAttention(InductorTestCase):
             ref_out, paged_compiled_out, atol=tolerance.atol, rtol=tolerance.rtol
         )
 
-    # gjn: fail fp32， in_ptr4/5
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     def test_doc_mask_sparse(self, device: str):
@@ -1262,7 +1261,6 @@ class TestFlexAttention(InductorTestCase):
         self.run_test(document_masking_causal, torch.float16, device=device)
         self.run_test_with_paged_attention(document_masking_causal, torch.float16, device=device)
 
-    # gjn: fail fp32， in_ptr4/5
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     def test_index_multiple(self, device:str):
@@ -1273,7 +1271,7 @@ class TestFlexAttention(InductorTestCase):
 
         self.run_test(index_multiple, torch.float16, device=device)
         self.run_test_with_paged_attention(index_multiple, torch.float16, device=device)
-    # gjn: fail fp32， in_ptr4/5
+
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     def test_index_weird1(self, device:str):
@@ -1284,7 +1282,7 @@ class TestFlexAttention(InductorTestCase):
 
         self.run_test(index_weird1, torch.float16)
         self.run_test_with_paged_attention(index_weird1, torch.float16, device=device)
-    # gjn: fail fp32， in_ptr4/5
+
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     def test_index_weird2(self, device:str):
@@ -1335,7 +1333,7 @@ class TestFlexAttention(InductorTestCase):
 
         self.run_test(score_mod, dtype, 4, 8, 128, 128)
         self.run_test_with_paged_attention(score_mod, dtype, 4, 8, 128, 128)
-    # gjn: fail fp32, multiple in ptrs
+
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     @common_utils.parametrize("dtype", test_dtypes)
@@ -1352,7 +1350,7 @@ class TestFlexAttention(InductorTestCase):
 
         self.run_test(all_bias, dtype, device=device)
         self.run_test_with_paged_attention(all_bias, dtype, device=device)
-    # gjn: fail fp32, multiple in ptrs
+
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     @common_utils.parametrize("dtype", test_dtypes_fast)
@@ -1365,7 +1363,7 @@ class TestFlexAttention(InductorTestCase):
 
         self.run_test(seq_mask_mod, dtype, device=device)
         self.run_test_with_paged_attention(seq_mask_mod, dtype, device=device)
-    # gjn: fail fp32, multiple in ptrs
+
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     @common_utils.parametrize("dtype", test_dtypes_fast)
@@ -1377,7 +1375,7 @@ class TestFlexAttention(InductorTestCase):
 
         self.run_test(bias_mod, dtype, device=device)
         self.run_test_with_paged_attention(bias_mod, dtype, device=device)
-    # gjn: fail fp32, multiple in ptrs
+
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     @common_utils.parametrize("dtype", test_dtypes_fast)
@@ -1389,7 +1387,7 @@ class TestFlexAttention(InductorTestCase):
 
         self.run_test(bias_mod, dtype, device=device)
         self.run_test_with_paged_attention(bias_mod, dtype, device=device)
-    # gjn: fail fp32, AssertionError: buf7
+
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     def test_load_from_view_buffer(self, device):
@@ -1438,7 +1436,6 @@ class TestFlexAttention(InductorTestCase):
         if not is_test_inference:
             out.sum().backward()
 
-    # gjn: fail fp32, multiple in ptrs
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     def test_load_from_bias_head_seq_batch(self, device):
@@ -1450,7 +1447,7 @@ class TestFlexAttention(InductorTestCase):
 
         self.run_test(bias_mod, dtype, device=device)
         self.run_test_with_paged_attention(bias_mod, dtype, device=device)
-    # gjn: fail fp32, multiple in ptrs
+
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     def test_load_rel_bias(self, device):
@@ -1462,7 +1459,7 @@ class TestFlexAttention(InductorTestCase):
 
         self.run_test(bias_mod, dtype, device=device)
         self.run_test_with_paged_attention(bias_mod, dtype, device=device)
-    # gjn: fail fp32, multiple in ptrs
+
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     def test_dependent_causal_bidirectional(self, device):
@@ -1564,7 +1561,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
 
         self.run_test(silu_score, dtype, device=device)
         self.run_test_with_paged_attention(silu_score, dtype, device=device)
-    # gjn: fail on other buffer
+
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     def test_padded_dense_causal(self, device):
@@ -1582,7 +1579,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         causal_njt = create_padded_dense_wrapper(_causal)
 
         self.run_test(causal_njt, dtype, device=device)
-    # gjn: fail on other buffer
+
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     def test_captured_scale(self, device):
@@ -1929,7 +1926,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         # We need this fudge factor for now as we write the extraneous logsumexp
         num_accesses += 1
         self.assertLess(metrics.num_bytes_accessed, accessed_bytes * num_accesses)
-    # gjn: fail on other buffer
+
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     @common_utils.parametrize("dtype", test_dtypes)
@@ -2653,7 +2650,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
                     ref_error * 1.2 > flex_error,
                     f"Ref error: {ref_error}, Flex Error: {flex_error}",
                 )
-    #gjn: fail on other buffer
+
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     def test_block_mask_non_divisible(self, device):
@@ -2918,7 +2915,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         attention = functools.partial(flex_attention, block_mask=block_mask)
 
         self.run_test_with_call(attention, dtype=torch.float, Q_S=S - 1, KV_S=S - 1, device=device)
-    # gjn : fail on other buffer
+
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     def test_modular_indexing(self, device):
@@ -3250,7 +3247,6 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
 
         self.assertEqual(torch._dynamo.utils.counters["aot_autograd"]["ok"], 2)
 
-    # gjn: fail to check Scalars are not equal!
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     def test_symbol_closure_in_score_mod(self, device):
