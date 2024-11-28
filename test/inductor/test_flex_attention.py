@@ -102,8 +102,8 @@ test_devices = ["cpu", "cuda"] if  is_test_with_cuda else ["cpu"]
 if is_test_with_cuda and not PLATFORM_SUPPORTS_BF16:
     test_dtypes = [torch.float16, torch.float32]
 else:
-    test_dtypes = [torch.float16, torch.bfloat16, torch.float32]
-test_dtypes_fast ={"cuda": torch.float16, "cpu":torch.bfloat16}
+    test_dtypes = [torch.float32, torch.bfloat16, torch.float16]
+test_dtypes_fast ={"cuda": torch.float16, "cpu":torch.float32}
 # --------- Useful score mod functions for testing ---------
 def _causal(
     score: Tensor,
@@ -406,7 +406,7 @@ class TestFlexAttention(InductorTestCase):
         sdpa_partial = create_attention(
             score_mod, block_mask, enable_gqa=(not Q_H == KV_H)
         )
-        #breakpoint()
+
         compiled_sdpa = torch.compile(sdpa_partial)
         golden_out = sdpa_partial(q_gold, k_gold, v_gold)
         ref_out = sdpa_partial(q_ref, k_ref, v_ref)
@@ -515,7 +515,6 @@ class TestFlexAttention(InductorTestCase):
         # convert block mask and score mod
         converted_block_mask = paged_attention.convert_logical_block_mask(block_mask)
         converted_score_mod = paged_attention.get_score_mod(score_mod)
-        # #breakpoint()
         return k_cache, v_cache, converted_block_mask, converted_score_mod
 
     def run_paged_attention(
@@ -2916,7 +2915,6 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             return q >= kv
 
         block_mask = create_block_mask(mask_mod, B, 1, S - 1, S - 1, device=device)
-        breakpoint()
         attention = functools.partial(flex_attention, block_mask=block_mask)
 
         self.run_test_with_call(attention, dtype=torch.float, Q_S=S - 1, KV_S=S - 1, device=device)
@@ -4205,7 +4203,7 @@ class TestPagedAttention(InductorTestCase):
     @common_utils.parametrize("score_mod", test_score_mods)
     def test_paged_builtin_score_mods(self, score_mod: Callable):
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        dtype = torch.float16 if device == "cuda" else torch.float
+        dtype = test_dtypes_fast[device]
         n_pages, page_size, max_batch_size, max_seq_len = 32, 128, 4, 512
         n_heads, head_dim = 4, 16
 

@@ -43,7 +43,6 @@ ATTENTION_TEMPLATE = r"""
   using accum_t = at::opmath_type<{{kernel.dtype(query)}}>;
   using Vec = at::vec::Vectorized<accum_t>;
   accum_t scaling_factor = {{scale}};
-
   int64_t batchSize = {{kernel.size(query, 0)}};
   int64_t qSize = {{kernel.size(query, 1)}};
   int64_t num_head = {{kernel.size(query, 2)}};
@@ -56,7 +55,6 @@ ATTENTION_TEMPLATE = r"""
   int64_t gqa_shards = num_head / num_head_k;
   int64_t bs_shards = batchSize / batchSize_k;
 
-  {%- if kv_indices %}
   int64_t batchSize_kvi = {{kernel.size(kv_indices, 0)}};
   int64_t num_head_kvi = {{kernel.size(kv_indices, 1)}};
   int64_t block_num_kvi = {{kernel.size(kv_indices, 3)}};
@@ -68,7 +66,6 @@ ATTENTION_TEMPLATE = r"""
   int64_t kviStrideH = {{kernel.stride(kv_indices, 1)}};
   int64_t kviStrideQ = {{kernel.stride(kv_indices, 2)}};
   auto  kv_indices_data = kv_indices;
-  {%- endif %}
 
   // Strides
   int64_t qStrideB = {{kernel.stride(query, 0)}};
@@ -104,9 +101,7 @@ ATTENTION_TEMPLATE = r"""
   if(block_num_kvi != total_kv_num_blocks &&  batchSize_k == 1 ){
     is_page_attention=true;
   }
-
   int64_t kvSize = is_page_attention ? total_kv_num_blocks*kvBlockSize : {{kernel.size(key, 1)}};
-
   int64_t qSplitSize = 32;
   int64_t kvSplitSize = 512;
   if(qSize >= 768){
@@ -125,7 +120,6 @@ ATTENTION_TEMPLATE = r"""
   kvSplitSize = kvSplitSize > kvSize ? kvSize : kvSplitSize;
   int64_t qSlice = (qSize + qSplitSize - 1) / qSplitSize;
   int64_t kvTail = (kvSize - 1) % kvSplitSize + 1;
-
   // allocate per thread temp buf (accumulate type)
   int64_t _size_per_thread =
         /* qk     */ qSplitSize * kvSplitSize +
@@ -177,14 +171,12 @@ ATTENTION_TEMPLATE = r"""
             auto j_kv = is_broadcast_head_kv ? j/gqa_shards : j;
             auto k_addr = k_data + i_kv * kStrideB + j_kv * kStrideH + n  * kStrideN;
 
-            {%- if kv_indices %}
             auto kv_block_num = n / kvBlockSize;
             auto kv_block_offset = n - kv_block_num * kvBlockSize;
             // getting kv indices by [BS, Head, 1, kv_block_num]
             auto i_kvi = is_broadcast_bs_kvi ? i/bs_shards_kvi : i;
             auto j_kvi = is_broadcast_head_kvi ? j/gqa_shards_kvi : j;
             auto kv_logical_data = kv_indices_data + i_kvi*kviStrideB + j_kvi*kviStrideH  + kv_block_num;
-            {%- endif %}
             if(is_page_attention){
                 k_addr = k_data + i_kv * kStrideB + j_kv * kStrideH + (*kv_logical_data * kvBlockSize + kv_block_offset)  * kStrideN;
             }
@@ -205,8 +197,9 @@ ATTENTION_TEMPLATE = r"""
               qk_data,
               cur_kvSplitSize);
 
-            // mask -inf in block padding length
-            _block_padding_mask_kernel<accum_t>(qk_data, cur_qSplitSize*cur_kvSplitSize);
+            // mask -inf in block padding length in last kvBlock
+            //_block_padding_mask_kernel<accum_t>(qk_data, cur_qSplitSize*cur_kvSplitSize);
+
             {%- if score_mod and mask_mod %}
             // apply score mod function
             for (int64_t row = 0; row < cur_qSplitSize; ++row) {
