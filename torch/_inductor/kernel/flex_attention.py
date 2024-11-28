@@ -751,7 +751,7 @@ def flex_attention(
         placeholder_inps = [
             create_placeholder(name, dtype, query.get_device())
             for name, dtype in [
-                ("score", query.get_dtype()),
+                ("score", torch.float),
                 ("b", torch.int32),
                 ("h", torch.int32),
                 ("q_idx", torch.int32),
