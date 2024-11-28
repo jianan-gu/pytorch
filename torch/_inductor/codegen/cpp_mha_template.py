@@ -35,7 +35,8 @@ ATTENTION_TEMPLATE = r"""
 {{kernel.def_kernel(inputs=kernel_args, outputs={"output": output})}}
 {
   int64_t kvBlockSize = {{kvBlockSize}};
-  const int64_t num_thread= {{num_thread}};
+  kvBlockSize = kvBlockSize > {{kernel.size(key, 1)}} ? {{kernel.size(key, 1)}} : kvBlockSize;
+  int64_t num_thread= {{num_thread}};
 
   // dtypes of kernel and internal buffers
   using scalar_t = {{kernel.dtype(query)}};

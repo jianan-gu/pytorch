@@ -1163,7 +1163,6 @@ class TestFlexAttention(InductorTestCase):
 
     @supported_platform
     @common_utils.parametrize("device", test_devices)
-    @common_utils.parametrize("dtype", test_dtypes_fast)
     @common_utils.parametrize(
         "q_s", test_strides[:2]
     )  # TODO: fix layout for query braodcasting
@@ -1179,7 +1178,8 @@ class TestFlexAttention(InductorTestCase):
         ],
     )
     @common_utils.parametrize("do_s", test_strides[:3])
-    def test_strided_inputs(self, device: str, dtype: torch.dtype, q_s, k_s, v_s, do_s):
+    def test_strided_inputs(self, device: str, q_s, k_s, v_s, do_s):
+        dtype = test_dtypes_fast[device]
         if device == "cpu":
             is_requires_grad = False
         else:
@@ -1280,7 +1280,7 @@ class TestFlexAttention(InductorTestCase):
         def index_weird1(score, b, h, q_idx, kv_idx):
             return score + bias[0][b, h][q_idx]
 
-        self.run_test(index_weird1, torch.float16)
+        self.run_test(index_weird1, torch.float16, device=device)
         self.run_test_with_paged_attention(index_weird1, torch.float16, device=device)
 
     @supported_platform
@@ -1292,7 +1292,7 @@ class TestFlexAttention(InductorTestCase):
         def index_weird2(score, b, h, q_idx, kv_idx):
             return score + bias[b][h][which_bias, q_idx]
 
-        self.run_test(index_weird2, torch.float16)
+        self.run_test(index_weird2, torch.float16, device=device)
         self.run_test_with_paged_attention(index_weird2, torch.float16, device=device)
 
     @supported_platform
@@ -1353,8 +1353,8 @@ class TestFlexAttention(InductorTestCase):
 
     @supported_platform
     @common_utils.parametrize("device", test_devices)
-    @common_utils.parametrize("dtype", test_dtypes_fast)
-    def test_seq_masking(self, device:str, dtype):
+    def test_seq_masking(self, device:str):
+        dtype = test_dtypes_fast[device]
         seq_idx = torch.zeros(S, device=device, dtype=torch.bool)
         seq_idx[S // 2 :] = 1
 
@@ -1366,8 +1366,8 @@ class TestFlexAttention(InductorTestCase):
 
     @supported_platform
     @common_utils.parametrize("device", test_devices)
-    @common_utils.parametrize("dtype", test_dtypes_fast)
-    def test_load_from_bias_seq_only(self, device:str, dtype):
+    def test_load_from_bias_seq_only(self, device:str):
+        dtype = test_dtypes_fast[device]
         bias = torch.randn(S, S, device=device, dtype=dtype)
 
         def bias_mod(score, b, h, q, kv):
@@ -1378,8 +1378,8 @@ class TestFlexAttention(InductorTestCase):
 
     @supported_platform
     @common_utils.parametrize("device", test_devices)
-    @common_utils.parametrize("dtype", test_dtypes_fast)
-    def test_load_from_bias_seq_batch(self, device:str,  dtype):
+    def test_load_from_bias_seq_batch(self, device:str):
+        dtype = test_dtypes_fast[device]
         bias = torch.randn(B, S, S, device=device, dtype=dtype)
 
         def bias_mod(score, b, h, q, kv):
@@ -1870,7 +1870,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             return q_idx >= kv_idx
 
         block_mask_a = torch.compile(create_block_mask)(causal_mask, 1, 1, 512, 512, device=device)
-        block_mask_b = create_block_mask(causal_mask, 1, 1, 512, 512)
+        block_mask_b = create_block_mask(causal_mask, 1, 1, 512, 512, device=device)
         self.assertEqual(block_mask_a.kv_num_blocks, block_mask_b.kv_num_blocks)
         self.assertEqual(block_mask_a.kv_indices, block_mask_b.kv_indices)
         self.assertEqual(block_mask_a.q_num_blocks, block_mask_b.q_num_blocks)
@@ -1892,7 +1892,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         )
         self.assertExpectedInline(block_mask.kv_num_blocks.sum().item(), """28""")
         attention = functools.partial(flex_attention, block_mask=block_mask)
-        self.run_test_with_call(attention)
+        self.run_test_with_call(attention, device=device)
 
         block_mask = create_block_mask(
             and_masks(causal_mask, neg_causal_mask), 1, 1, S, S, device=device
