@@ -829,8 +829,6 @@ def flex_attention(
         has_other_buffer=False
         other_buffer_name_to_buffer = {}
         if score_mod_other_buffers or mask_mod_other_buffers:
-            # assert len(score_mod_other_buffers) == 1
-            # assert len(mask_mod_other_buffers) == 1
             other_buffers = [*score_mod_other_buffers, *mask_mod_other_buffers]
             input_nodes += other_buffers
             has_other_buffer=True

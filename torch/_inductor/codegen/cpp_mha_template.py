@@ -403,9 +403,8 @@ class CppMHATemplate(CppTemplate):
 
     def modification(self, subgraph_buffer, output_name, output_idx):
         if self.has_other_buffer:
-            # TODO: fix indices
-            score_other_buf_names = [item.get_name() for item in self.input_nodes[5 + self.other_buffer_input_offset:5 + self.other_buffer_input_offset + self.len_score_other]]
-            mask_other_buf_names = [item.get_name() for item in self.input_nodes[5 + self.other_buffer_input_offset + self.len_score_other:]]
+            score_other_buf_names = [item.get_name() for item in self.score_mod_other_buffers]
+            mask_other_buf_names = [item.get_name() for item in self.mask_mod_other_buffers]
 
         assert isinstance(subgraph_buffer, ir.ComputedBuffer)
         subgraph_buffer_data = subgraph_buffer.data
