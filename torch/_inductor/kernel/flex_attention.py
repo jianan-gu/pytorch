@@ -808,8 +808,8 @@ def flex_attention(
         )
         score_mod_other_buffers = maybe_realize(score_mod_other_buffers)
         mask_mod_other_buffers = maybe_realize(mask_mod_other_buffers)
-        Bq, Hq, seq_len_q, qk_head_dim = V.graph.sizevars.size_hints(query.get_size())
-        Bkv, Hkv, seq_len_kv, v_head_dim = V.graph.sizevars.size_hints(value.get_size())
+        Bq, Hq, seq_len_q, qk_head_dim = query.get_size()
+        Bkv, Hkv, seq_len_kv, v_head_dim = value.get_size()
         B = Bq
 
         # Construct output layout with strides matching the query.

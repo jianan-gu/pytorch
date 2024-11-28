@@ -809,6 +809,7 @@ class TestFlexAttention(InductorTestCase):
                 compiled_out2,
                 is_paged_attention=False,
             )
+            self.assertEqual(torch._dynamo.utils.counters["frames"]["ok"], 1)
         else:
             compiled_out2.backward(backward_grad2)
             self._check_out_and_grad(
@@ -825,7 +826,7 @@ class TestFlexAttention(InductorTestCase):
                 v2_ref,
                 v2,
             )
-        self.assertEqual(torch._dynamo.utils.counters["frames"]["ok"], 2)
+            self.assertEqual(torch._dynamo.utils.counters["frames"]["ok"], 2)
 
         # No re-compilation, use the compiled dynamic shape version.
         # The current q_seqlen (MAX_S/4) is still smaller than the seqlen from block_mask (MAX_S),
@@ -838,6 +839,7 @@ class TestFlexAttention(InductorTestCase):
                 compiled_out3,
                 is_paged_attention=False,
             )
+            self.assertEqual(torch._dynamo.utils.counters["frames"]["ok"], 1)
         else:
             compiled_out3.backward(backward_grad3)
             self._check_out_and_grad(
@@ -854,14 +856,14 @@ class TestFlexAttention(InductorTestCase):
                 v3_ref,
                 v3,
             )
-        self.assertEqual(torch._dynamo.utils.counters["frames"]["ok"], 2)
+            self.assertEqual(torch._dynamo.utils.counters["frames"]["ok"], 2)
 
         # The forth iteration, shape (B * 2, H, S * 2, D)
         # Since seqlen is larger than the seqlen in block_mask, throw errors.
         S = int(S * 8)
-        q3 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=True)
-        k3 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=True)
-        v3 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=True)
+        q3 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=False if device == "cpu" else True)
+        k3 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=False if device == "cpu" else True)
+        v3 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=False if device == "cpu" else True)
         with self.assertRaisesRegex(
             torch._dynamo.exc.BackendCompilerFailed, "Q seqlen must be smaller than"
         ):
@@ -882,7 +884,7 @@ class TestFlexAttention(InductorTestCase):
         else:
             is_requires_grad = True
         MAX_S = S
-        block_mask = create_block_mask(noop_mask, 1, 1, MAX_S, MAX_S)
+        block_mask = create_block_mask(noop_mask, 1, 1, MAX_S, MAX_S, device=device)
         sdpa_partial = create_attention(score_mod, block_mask=block_mask)
         # The first eager batch, shape (B, H, S, D)
         q1 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad)
@@ -1007,7 +1009,7 @@ class TestFlexAttention(InductorTestCase):
         self, device: str, score_mod: Callable
     ):  
         dtype = test_dtypes_fast[device]
-        self.run_automatic_dynamic_test(score_mod, dtype)
+        self.run_automatic_dynamic_test(score_mod, dtype, device=device)
 
     @supported_platform
     @common_utils.parametrize("device", test_devices)
@@ -3211,7 +3213,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
                 self.qkv = torch.nn.Linear(dim, 3 * dim)
                 self.n_head = n_head
                 self.head_dim = dim // n_head
-
+            @torch.no_grad
             def forward(self, x, block_mask=None):
                 B, T, C = x.size()
                 qkv = self.qkv(x).view(B, T, 3, self.n_head, self.head_dim)
@@ -3225,7 +3227,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
                 )
                 return y.transpose(1, 2).contiguous().view(B, T, C)
 
-        model = SimpleAttention().to(device)
+        model = SimpleAttention().to(device).eval()
         model.compile(mode="default", dynamic=True)
         sequence_len = 256
 
@@ -3233,7 +3235,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         torch._dynamo.reset()
         for batch_shape in [4, 16, 32]:
             # Create dense mask
-            rand_mask = torch.randint(0, 2, (batch_shape, sequence_len)).to(device).bool()
+            rand_mask = torch.randint(0, 2, (batch_shape, sequence_len), requires_grad=False).to(device).bool()
             block_mask = torch.compile(create_block_mask, dynamic=True)(
                 B=batch_shape,
                 BLOCK_SIZE=128,
@@ -3245,7 +3247,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             )
 
             # Run forward pass
-            x = torch.randn(batch_shape, sequence_len, 512).to(device)
+            x = torch.randn(batch_shape, sequence_len, 512, requires_grad=False).to(device)
             y = model(x, block_mask=block_mask)
 
         self.assertEqual(torch._dynamo.utils.counters["aot_autograd"]["ok"], 2)

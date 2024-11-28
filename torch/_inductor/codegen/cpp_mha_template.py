@@ -23,10 +23,8 @@ ATTENTION_TEMPLATE = r"""
 {%- set kernel_args = {"query": query, "key": key, "value": value, "kv_num_blocks": kv_num_blocks, "kv_indices": kv_indices, "full_kv_num_blocks": full_kv_num_blocks,  "mask_other": mask_mod_other_buffers} %}
 {{kernel.def_kernel(inputs=kernel_args, outputs={"output": output})}}
 {
-  // kv block size, q and kv split size
   int64_t kvBlockSize = {{kvBlockSize}};
-  int64_t qSplitSize = {{qSplitSize}};
-  int64_t kvSplitSize = {{kvSplitSize}};
+  const int64_t num_thread= {{num_thread}};
 
   // dtypes of kernel and internal buffers
   using scalar_t = {{kernel.dtype(query)}};
@@ -74,7 +72,7 @@ ATTENTION_TEMPLATE = r"""
   int64_t oStrideB = {{kernel.stride(output, 0)}};
   int64_t oStrideM = {{kernel.stride(output, 2)}};
   int64_t oStrideH = {{kernel.stride(output, 1)}};
-  
+
   // page attention KV cache may have allocated extra block buffers and its shape is (1, H, MAX_S, D)
   int total_kv_num_blocks = 0;
   int zero_kv_idx_num = 1;
@@ -97,23 +95,37 @@ ATTENTION_TEMPLATE = r"""
   }
 
   int64_t kvSize = is_page_attention ? total_kv_num_blocks*kvBlockSize : {{kernel.size(key, 1)}};
-  
+
+  int64_t qSplitSize = 32;
+  int64_t kvSplitSize = 512;
+  if(qSize >= 768){
+    qSplitSize = 256;
+    kvSplitSize = 512;
+  }
+  else if(qSize >= 192){
+    qSplitSize = 64;
+    kvSplitSize = 512;
+  }
+  if (kvBlockSize < kvSplitSize){
+    kvSplitSize=kvBlockSize;
+  }
+
   qSplitSize = qSplitSize > qSize ? qSize : qSplitSize;
   kvSplitSize = kvSplitSize > kvSize ? kvSize : kvSplitSize;
   int64_t qSlice = (qSize + qSplitSize - 1) / qSplitSize;
   int64_t kvTail = (kvSize - 1) % kvSplitSize + 1;
-  
+
   // allocate per thread temp buf (accumulate type)
-  int64_t size_per_thread =
+  int64_t _size_per_thread =
         /* qk     */ qSplitSize * kvSplitSize +
         /* qk_max */ qSplitSize +
         /* qk_sum */ qSplitSize +
         /* dst    */ qSplitSize * headSize_v;
 
   {%- set acc_buf_name = "buf" %}
-      {{kernel.define_buffer(acc_buf_name, [num_thread, size_per_thread], dtype=accumulate_dtype)}}
+      {{kernel.define_buffer(acc_buf_name, ["num_thread", "_size_per_thread"], dtype=accumulate_dtype)}}
   {%- set acc_reduced_buf_name = "buf_reduced" %}
-      {{ kernel.define_buffer(acc_reduced_buf_name, [num_thread, qSplitSize, kvSplitSize], dtype=query_dtype)}}
+      {{ kernel.define_buffer(acc_reduced_buf_name, ["num_thread", "qSplitSize", "kvSplitSize"], dtype=query_dtype)}}
 
   const scalar_t* q_data = query;
   const scalar_t* k_data = key;
@@ -128,7 +140,7 @@ ATTENTION_TEMPLATE = r"""
      int64_t i = 0, j = 0, k = 0;
      at::native::data_index_init(begin, i, batchSize, j, num_head, k, qSlice);
         int ompIdx = at::get_thread_num();
-        accum_t* buf_ptr = buf_data + ompIdx * size_per_thread;
+        accum_t* buf_ptr = buf_data + ompIdx * _size_per_thread;
         accum_t* qk_data = buf_ptr;
         accum_t* qk_max_data = qk_data + qSplitSize * kvSplitSize;
         accum_t* qk_sum_data = qk_max_data + qSplitSize;
@@ -145,7 +157,6 @@ ATTENTION_TEMPLATE = r"""
           fill_stub(qk_sum_data,
               static_cast<accum_t>(0), cur_qSplitSize);
           int64_t num_keys = kvSize;
-
           for (int64_t n = 0; n < num_keys; n += kvSplitSize) {
             int64_t cur_kvSplitSize = std::min(kvSplitSize, kvSize - n);
             cur_kvSplitSize = cur_kvSplitSize == kvSplitSize ? kvSplitSize : kvTail;
@@ -185,7 +196,6 @@ ATTENTION_TEMPLATE = r"""
 
             // mask -inf in block padding length
             _block_padding_mask_kernel<accum_t>(qk_data, cur_qSplitSize*cur_kvSplitSize);
-
             {%- if score_mod and mask_mod %}
             // apply score mod function
             for (int64_t row = 0; row < cur_qSplitSize; ++row) {
@@ -236,7 +246,6 @@ ATTENTION_TEMPLATE = r"""
                 }
             }
             {%- endif %}      
-
             // Update coefficients with Softmax
             accum_t tmp_max = 0, tmp_sum = 0, exp_tmp = 0;
             for (int64_t row = 0; row < cur_qSplitSize; ++row) {
@@ -280,7 +289,6 @@ ATTENTION_TEMPLATE = r"""
             if(is_page_attention){
                 v_addr = v_data + i_kv * vStrideB + j_kv * vStrideH + (*kv_logical_data * kvBlockSize + kv_block_offset)  * vStrideN;
             }
-
             at::native::cpublas::gemm(
               at::native::TransposeType::NoTranspose,
               at::native::TransposeType::NoTranspose,
@@ -296,7 +304,6 @@ ATTENTION_TEMPLATE = r"""
               dst_data,
               headSize_v);
           }
-
           // dst <- dst / sum[row]
           // reorder MHA output with strides
           for (int64_t row = 0; row < cur_qSplitSize; ++row) {
@@ -480,31 +487,6 @@ class CppMHATemplate(CppTemplate):
         key = kernel.permute(self.input_nodes[1], [0, 2, 1, 3])
         value = kernel.permute(self.input_nodes[2], [0, 2, 1, 3])
 
-        qSize = V.graph.sizevars.size_hints(query.get_size())[1]
-        kvSize = V.graph.sizevars.size_hints(key.get_size())[1]
-        headSize = V.graph.sizevars.size_hints(value.get_size())[3]
-
-        if qSize >= 768:
-            qSplitSize = 256
-            kvSplitSize = 512
-        elif qSize >= 192:
-            qSplitSize = 64
-            kvSplitSize = 512
-        else:
-            qSplitSize = 32
-            kvSplitSize = 512
-
-        if self.kv_block_size < kvSplitSize:
-            kvSplitSize = self.kv_block_size
-
-        # get size_per_thread/qSplitSize/kvSplitSize for buf/buf_reduced creation
-        qSplitSize = min(qSplitSize, qSize)
-        kvSplitSize = min(kvSplitSize, kvSize)
-        # sizes for qk + qk_max + qk_sum + dst
-        size_per_thread = (
-            qSplitSize * kvSplitSize + qSplitSize + qSplitSize + qSplitSize * headSize
-        )
-
         num_threads = parallel_num_threads()
         buf_out = TensorBox.create(self.output_node)
         if template_buffer_node is not None:
@@ -521,9 +503,6 @@ class CppMHATemplate(CppTemplate):
             scale=self.scale,
             accumulate_dtype=torch.float,
             query_dtype=query.layout.dtype,
-            qSplitSize=qSplitSize,
-            kvSplitSize=kvSplitSize,
-            size_per_thread=size_per_thread,
             kvBlockSize=self.kv_block_size,
             template=self,
             output=buf_out,
