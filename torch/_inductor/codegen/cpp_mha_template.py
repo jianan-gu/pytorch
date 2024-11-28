@@ -354,16 +354,16 @@ class CppMHATemplate(CppTemplate):
         self.scale = scale
         self.score_mod = score_mod
         self.mask_mod = mask_mod
-        self.score_buf_name = V.graph.register_buffer(self.score_mod)
-        self.mask_buf_name = V.graph.register_buffer(self.mask_mod)
+        self.score_buf_name = V.graph.register_buffer(self.score_mod) if self.score_mod else None
+        self.mask_buf_name = V.graph.register_buffer(self.mask_mod) if self.mask_mod else None
 
         def get_idx(buf_name):
             match = re.search(r'\d+', buf_name)
             assert match, f"incorrect score buf name: {buf_name}"
             return match.group()
 
-        self.score_buf_idx = get_idx(self.score_buf_name)
-        self.mask_buf_idx = get_idx(self.mask_buf_name)
+        self.score_buf_idx = get_idx(self.score_buf_name) if self.score_buf_name else None
+        self.mask_buf_idx = get_idx(self.mask_buf_name) if self.mask_buf_name else None
         self.kv_block_size = kv_block_size
         self.has_other_buffer=has_other_buffer
         self.no_full_kv_block=no_full_kv_block
