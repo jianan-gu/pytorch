@@ -523,7 +523,7 @@ class CppFlexAttentionTemplate(CppTemplate):
         epilogue_nodes: Optional[List[ir.IRNode]] = None,
         **kwargs,
     ) -> str:
-        if epilogue_nodes is not None:
+        if epilogue_nodes is not None and epilogue_nodes != []:
             raise NotImplementedError(
                 "Unsupported for `epilogue_nodes` in CppFlexAttentionTemplate."
             )
