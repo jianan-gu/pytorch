@@ -82,10 +82,10 @@ ATTENTION_TEMPLATE = r"""
   int64_t oStrideM = {{kernel.stride(output, 2)}};
   int64_t oStrideH = {{kernel.stride(output, 1)}};
 
-  // page attention KV cache may have allocated extra block buffers and its shape is (1, H, MAX_S, D)
-  int total_kv_num_blocks = 0;
-  int zero_kv_idx_num = 1;
-  for(int kv_idx = 0; kv_idx <{{kernel.size(kv_indices, 3)}}; kv_idx++){
+  // Check total kv block number for kv value.
+  int64_t total_kv_num_blocks = 0;
+  int64_t zero_kv_idx_num = 1;
+  for(int64_t kv_idx = 0; kv_idx <{{kernel.size(kv_indices, 3)}}; kv_idx++){
     if(*(kv_indices + kv_idx) > 0){
       total_kv_num_blocks++;
     }else if(*(kv_indices + kv_idx) == 0){
@@ -97,12 +97,12 @@ ATTENTION_TEMPLATE = r"""
       }
     }
   }
-  //TODO: double check here
-  bool is_page_attention = false;
+  // Check to use kv_indice if total block size is bigger than kv length, e.g., in PagedAttention case.
+  bool use_kv_indice = false;
   if(block_num_kvi != total_kv_num_blocks &&  batchSize_k == 1 ){
-    is_page_attention=true;
+    use_kv_indice=true;
   }
-  int64_t kvSize = is_page_attention ? total_kv_num_blocks*kvBlockSize : {{kernel.size(key, 1)}};
+  int64_t kvSize = use_kv_indice ? total_kv_num_blocks*kvBlockSize : {{kernel.size(key, 1)}};
   int64_t qSplitSize = 32;
   int64_t kvSplitSize = 512;
   if(qSize >= 768){
@@ -178,7 +178,7 @@ ATTENTION_TEMPLATE = r"""
             auto i_kvi = is_broadcast_bs_kvi ? i/bs_shards_kvi : i;
             auto j_kvi = is_broadcast_head_kvi ? j/gqa_shards_kvi : j;
             auto kv_logical_data = kv_indices_data + i_kvi*kviStrideB + j_kvi*kviStrideH  + kv_block_num;
-            if(is_page_attention){
+            if(use_kv_indice){
                 k_addr = k_data + i_kv * kStrideB + j_kv * kStrideH + (*kv_logical_data * kvBlockSize + kv_block_offset)  * kStrideN;
             }
 
@@ -203,16 +203,16 @@ ATTENTION_TEMPLATE = r"""
 
             {%- if score_mod and mask_mod %}
             // apply score mod function
-            for (int64_t row = 0; row < cur_qSplitSize; ++row) {
+            for (int row = 0; row < cur_qSplitSize; ++row) {
               for(int col = 0; col< cur_kvSplitSize; col++){
-                std::vector<int64_t> b_idx = {i};
-                std::vector<int64_t> h_idx = {j};
-                std::vector<int64_t> q_idx = {m+row};
-                int64_t phisical_kv_idx = n+col;
-                if(is_page_attention){
+                std::vector<int> b_idx = {i};
+                std::vector<int> h_idx = {j};
+                std::vector<int> q_idx = {m+row};
+                int phisical_kv_idx = n+col;
+                if(use_kv_indice){
                     phisical_kv_idx= *kv_logical_data * kvBlockSize + col;
                 }
-                std::vector<int64_t> kv_idx = {phisical_kv_idx};
+                std::vector<int> kv_idx = {phisical_kv_idx};
                 accum_t* in_ptr0 = qk_data + row * cur_kvSplitSize + col;
                 auto in_ptr1 = b_idx.data();
                 auto in_ptr2 = h_idx.data();
@@ -224,24 +224,24 @@ ATTENTION_TEMPLATE = r"""
                 }
             }
             // Apply block mask, fill unused with -inf
-            for (int64_t row = 0; row < cur_qSplitSize; ++row) {
+            for (int row = 0; row < cur_qSplitSize; ++row) {
               for(int col = 0; col< cur_kvSplitSize; col++){
-                std::vector<int64_t> b_idx = {i};
-                std::vector<int64_t> h_idx = {j};
-                std::vector<int64_t> q_idx = {m+row};
-                int64_t phisical_kv_idx = n+col;
-                if(is_page_attention){
+                std::vector<int> b_idx = {i};
+                std::vector<int> h_idx = {j};
+                std::vector<int> q_idx = {m+row};
+                int phisical_kv_idx = n+col;
+                if(use_kv_indice){
                     phisical_kv_idx= *kv_logical_data * kvBlockSize + col;
                 }
-                std::vector<int64_t> kv_idx = {phisical_kv_idx};
+                std::vector<int> kv_idx = {phisical_kv_idx};
                 accum_t* qk_block = qk_data + row * cur_kvSplitSize + col;
                 auto in_ptr1 = b_idx.data();
                 auto in_ptr2 = h_idx.data();
                 auto in_ptr3 = q_idx.data();
                 auto in_ptr4 = kv_idx.data();
                 {{template.generate_other_buffer("mask_others", 5, -1, "len_mask_other", kernel.args)}}
-                std::vector<int64_t> temp = {0};
-                int64_t* out_ptr{{mask_buf_idx}} = temp.data();
+                std::vector<int> temp = {0};
+                int* out_ptr{{mask_buf_idx}} = temp.data();
                 {{template.modification(mask_mod, mask_buf_name, mask_buf_idx)}}
                 *qk_block = *out_ptr{{mask_buf_idx}}!=0 ?  *qk_block : -std::numeric_limits<accum_t>::infinity();
                 }
@@ -287,7 +287,7 @@ ATTENTION_TEMPLATE = r"""
             }
             // Calculate Softmax(q @ k.T) @ v
             auto v_addr = v_data + i_kv * vStrideB + j_kv * vStrideH + n  * vStrideN;
-            if(is_page_attention){
+            if(use_kv_indice){
                 v_addr = v_data + i_kv * vStrideB + j_kv * vStrideH + (*kv_logical_data * kvBlockSize + kv_block_offset)  * vStrideN;
             }
             at::native::cpublas::gemm(
