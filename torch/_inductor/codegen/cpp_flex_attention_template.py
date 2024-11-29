@@ -463,7 +463,7 @@ class CppFlexAttentionTemplate(CppTemplate):
         )
 
         from ..loop_body import MemoryUsageType
-        assert all(mem.buffer_name in kernel_group.args.input_buffers for mem in body.memory_usage[MemoryUsageType.LOAD]), "Unsupported for now"
+        assert all(mem.buffer_name in kernel_group.args.input_buffers for mem in body.memory_usage[MemoryUsageType.LOAD]), "All the buffers in the score and mask subgraph should be in kernel_group.args.input_buffers"
 
         bodies.append(body)
         var_sizes_list.append((var_sizes, ()))
