@@ -713,7 +713,7 @@ def create_indices_fake(x) -> torch.Tensor:
 
 from torch._inductor.kernel.flex_decoding import create_flex_decoding_kernel
 
-from ..codegen.cpp_mha_template import CppMHATemplate
+from ..codegen.cpp_flex_attention_template import CppFlexAttentionTemplate
 
 # TODO: We probably also need a layout constraint?
 @register_lowering(torch.ops.higher_order.flex_attention, type_promotion_kind=None)
@@ -854,7 +854,7 @@ def flex_attention(
         assert V.graph.sizevars.evaluate_expr(
             sympy.Le(seq_len_kv, sympy.Mul(kv_indices.get_size()[-1], SPARSE_KV_BLOCK_SIZE))
         ), "KV seqlen must be smaller than the block_mask size in the KV dimension, considering pass a larger block_mask."
-        CppMHATemplate.add_choices(
+        CppFlexAttentionTemplate.add_choices(
             choices=choices,
             input_nodes=input_nodes,
             layout=layout,

@@ -498,7 +498,7 @@ class CppMHATemplate(CppTemplate):
             return output
 
         template = DataProcessorTemplateWrapper(
-            CppMHATemplate,
+            cpp_flex_attention_template,
             preprocessor,
             postprocessor,
             input_nodes=input_nodes,

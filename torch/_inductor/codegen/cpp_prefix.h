@@ -59,52 +59,6 @@ struct Welford {
   uint64_t index = 0;
 };
 
-
-// block may be padding with 0.0 if sequence lenghth is not divable by block size
-// we need to mask those padding 0.0 with -inf in attention weights.
-template <typename T>
-inline void _block_padding_mask_kernel(T* a, const int& size){
-  
-  auto vec_size = at::vec::Vectorized<T>::size();
-    
-  int64_t vec_bound = size- size % vec_size;
-  int64_t index=0;
-  auto zero = static_cast<float>(0.0);
-  auto neg_inf = -std::numeric_limits<float>::infinity();
-  
-  while(index<vec_bound)
-  {
-      auto tmp0 = at::vec::Vectorized<T>::loadu(a + index, vec_size);
-      if(std::is_same_v<T, at::BFloat16> || std::is_same_v<T, at::Half>){
-          tmp0 = at::vec::convert<float>(tmp0);
-      }
-      auto tmp2 = at::vec::Vectorized<float>(zero);
-      auto tmp3 = at::vec::VecMask<float, 1>(tmp0 == tmp2);
-      auto tmp5 = at::vec::Vectorized<float>(neg_inf);
-      auto tmp6 = decltype(tmp5)::blendv(tmp0, tmp5, tmp3.template cast<float, 1>());
-      if(std::is_same_v<T, at::BFloat16> || std::is_same_v<T, at::Half>){
-        tmp6 = at::vec::convert<T>(tmp6);
-      }
-      tmp6.store(a + index, vec_size);
-      index+=vec_size;
-  }
-  while(index<size)
-  {
-      auto tmp0 = a[index];
-      if(std::is_same_v<T, at::BFloat16> || std::is_same_v<T, at::Half>){
-        tmp0 = c10::convert<float>(tmp0);
-      }
-      auto tmp3 = tmp0 == zero;
-      auto tmp5 = tmp3 ? neg_inf : tmp0;
-      if(std::is_same_v<T, at::BFloat16> || std::is_same_v<T, at::Half>){
-        tmp5 = c10::convert<T>(tmp5);
-      }
-      a[index] = tmp5;
-      index+=1;
-      
-  }
-}
-
 // 1) out = exp(a - val)
 // 2) val = sum(out)
 template <typename T1, typename T2>
