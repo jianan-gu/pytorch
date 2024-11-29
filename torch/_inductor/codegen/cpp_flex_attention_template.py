@@ -2,6 +2,7 @@
 import re
 import contextlib
 import logging
+import sympy
 from typing import List, Optional
 from unittest.mock import patch
 
@@ -360,18 +361,24 @@ class CppFlexAttentionTemplate(CppTemplate):
         self.other_ptr_data = {}
 
     def update_kernel_args(self, kernel_args):
-        kernel_args.update(self.kernel_input_name_to_buffer)
+        kernel_args.update({
+            key: value 
+            for key, value in self.kernel_input_name_to_buffer.items()
+            if not isinstance(value, sympy.Symbol)
+        })     
         return kernel_args
 
     def generate_other_buffer(self, buf_list, start_ptr, start_offset, len_attr, kernel_args):
         kernel_input_name_to_buffer_name = {
-            key: value.get_name() for key, value in self.kernel_input_name_to_buffer.items()
+            key: value if isinstance(value, sympy.Symbol) else value.get_name() for key, value in self.kernel_input_name_to_buffer.items()
         }
 
         def get_arg(name):
             return kernel_input_name_to_buffer_name.get(name)
 
         def get_arg_name(name):
+            if isinstance(get_arg(name), sympy.Symbol):
+                return kernel_args.sizevars.get(get_arg(name))            
             return kernel_args.input_buffers.get(get_arg(name))
 
         if not self.has_other_buffer:
@@ -396,10 +403,6 @@ class CppFlexAttentionTemplate(CppTemplate):
         )
 
     def modification(self, subgraph_buffer, output_name, output_idx):
-        if self.has_other_buffer:
-            score_other_buf_names = [item.get_name() for item in self.score_mod_other_buffers]
-            mask_other_buf_names = [item.get_name() for item in self.mask_mod_other_buffers]
-
         assert isinstance(subgraph_buffer, ir.ComputedBuffer)
         subgraph_buffer_data = subgraph_buffer.data
         from ..loop_body import LoopBody
@@ -458,6 +461,9 @@ class CppFlexAttentionTemplate(CppTemplate):
             list(var_ranges.keys()),
             tuple(),
         )
+
+        from ..loop_body import MemoryUsageType
+        assert all(mem.buffer_name in kernel_group.args.input_buffers for mem in body.memory_usage[MemoryUsageType.LOAD]), "All the buffers in the score and mask subgraph should be in kernel_group.args.input_buffers"
 
         bodies.append(body)
         var_sizes_list.append((var_sizes, ()))
