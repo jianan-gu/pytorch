@@ -34,8 +34,8 @@ supported_platform = skipUnless(
     and torch.cuda.get_device_capability() >= (8, 0)),
     "Requires CUDA and Triton, or CPU",
 )
-is_test_with_cuda = torch.cuda.is_available() and torch.utils._triton.has_triton() and torch.cuda.get_device_capability() >= (8, 0)
-test_devices = ["cpu", "cuda"] if  is_test_with_cuda else ["cpu"]
+TEST_ON_CUDA = torch.cuda.is_available() and torch.utils._triton.has_triton() and torch.cuda.get_device_capability() >= (8, 0)
+test_devices = ["cpu", "cuda"] if  TEST_ON_CUDA else ["cpu"]
 Tolerances = namedtuple("Tolerances", ["atol", "rtol"])
 torch.set_float32_matmul_precision("high")
 
@@ -65,7 +65,7 @@ test_dtypes = (
     else [torch.float16, torch.float32]
 )
 
-if is_test_with_cuda and not PLATFORM_SUPPORTS_BF16:
+if TEST_ON_CUDA and not PLATFORM_SUPPORTS_BF16:
     test_dtypes = [torch.float16, torch.float32]
 else:
     test_dtypes = [torch.float32, torch.bfloat16, torch.float16]
@@ -625,7 +625,7 @@ class TestFlexDecoding(InductorTestCase):
         )
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     @expectedFailure
     @common_utils.parametrize("dtype", [test_dtypes_fast["cuda"]])
     def test_bw_decoding_fails(self, dtype):
@@ -1068,7 +1068,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         self.run_test_with_paged_attention(score_mod_scale, dtype, device=device)
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     @expectedFailure  # If we capture a tensor then we can perform a reduction on it, and that shouldn't be allowed
     @common_utils.parametrize("dtype", [test_dtypes_fast["cuda"]])
     def test_captured_reduction(self, dtype):
@@ -1493,7 +1493,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         )
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     @common_utils.parametrize("dtype", test_dtypes)
     @common_utils.parametrize("score_mod", [_identity, _causal])
     def test_logsumexp_correctness(self, dtype, score_mod):
@@ -1547,7 +1547,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         )
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     def test_logsumexp_only_return(self):
         make_q = functools.partial(
             torch.randn,

@@ -10,7 +10,6 @@ from contextlib import contextmanager
 from typing import Callable, List, Optional, Tuple, Union
 from unittest import expectedFailure, skip, skipUnless
 from unittest.mock import patch
-
 import torch
 from torch._dynamo.testing import CompileCounterWithBackend, normalize_gm
 from torch._inductor import metrics
@@ -34,7 +33,7 @@ from torch.testing import FileCheck
 from torch.testing._internal import common_utils
 from torch.testing._internal.common_cuda import PLATFORM_SUPPORTS_BF16, TEST_MULTIGPU
 from torch.testing._internal.common_device_type import (
-    flex_attention_supported_platform as supported_platform
+    flex_attention_supported_platform as supported_platform, expectedFailureCPU
 )
 from torch.testing._internal.common_utils import TEST_WITH_ROCM
 from torch.utils._triton import has_triton
@@ -97,9 +96,9 @@ def create_block_mask_test(score_mod, query, key):
     )
     return block_mask
 
-is_test_with_cuda = torch.cuda.is_available() and torch.utils._triton.has_triton() and torch.cuda.get_device_capability() >= (8, 0)
-test_devices = ["cpu", "cuda"] if  is_test_with_cuda else ["cpu"]
-if is_test_with_cuda and not PLATFORM_SUPPORTS_BF16:
+TEST_ON_CUDA = torch.cuda.is_available() and torch.utils._triton.has_triton() and torch.cuda.get_device_capability() >= (8, 0)
+test_devices = ["cpu", "cuda"] if  TEST_ON_CUDA else ["cpu"]
+if TEST_ON_CUDA and not PLATFORM_SUPPORTS_BF16:
     test_dtypes = [torch.float16, torch.float32]
 else:
     test_dtypes = [torch.float32, torch.bfloat16, torch.float16]
@@ -1322,7 +1321,7 @@ class TestFlexAttention(InductorTestCase):
         self.run_test_with_paged_attention(composed_score_mod, dtype, device=device)
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     @expectedFailure  # TODO: Remove this after supporting compiled flex attention with training bias
     @common_utils.parametrize("dtype", test_dtypes)
     def test_captured_buffers_req_grad(self, dtype: torch.dtype):
@@ -1389,11 +1388,12 @@ class TestFlexAttention(InductorTestCase):
         self.run_test_with_paged_attention(bias_mod, dtype, device=device)
 
     @supported_platform
-    @common_utils.parametrize("device", test_devices)
-    def test_load_from_view_buffer(self, device):
-        dtype = test_dtypes_fast[device]
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
+    def test_load_from_view_buffer(self):
+        dtype = torch.float16
+        device = "cuda"
         W = 8
-        is_test_inference = True if device == "cpu" else False
+
         class SimpleAttention(torch.nn.Module):
             def __init__(self):
                 super().__init__()
@@ -1429,12 +1429,11 @@ class TestFlexAttention(InductorTestCase):
 
         m = SimpleAttention().to(device).eval()
         m = torch.compile(m, mode="max-autotune", fullgraph=True)
-        q = torch.randn(B, H, H * W, D, device=device, dtype=dtype, requires_grad=not is_test_inference)
-        k = torch.randn(B, H, H * W, D, device=device, dtype=dtype, requires_grad=not is_test_inference)
-        v = torch.randn(B, H, H * W, D, device=device, dtype=dtype, requires_grad=not is_test_inference)
+        q = torch.randn(B, H, H * W, D, device=device, dtype=dtype, requires_grad=True)
+        k = torch.randn(B, H, H * W, D, device=device, dtype=dtype, requires_grad=True)
+        v = torch.randn(B, H, H * W, D, device=device, dtype=dtype, requires_grad=True)
         out = m(q, k, v)
-        if not is_test_inference:
-            out.sum().backward()
+        out.sum().backward()
 
     @supported_platform
     @common_utils.parametrize("device", test_devices)
@@ -1507,7 +1506,7 @@ class TestFlexAttention(InductorTestCase):
         self.run_test_with_paged_attention(natten_mask, dtype, device=device)
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     @common_utils.parametrize("dtype", [test_dtypes_fast["cuda"]])
     def test_subgraph_respect_decompostion(self, dtype):
 
@@ -1613,7 +1612,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         self.run_test_with_paged_attention(score_mod_scale, dtype, device=device)
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     @expectedFailure  # If we capture a tensor then we can perform a reduction on it, and that shouldn't be allowed
     @common_utils.parametrize("dtype", test_dtypes_fast)
     def test_captured_reduction(self, dtype):
@@ -1836,11 +1835,10 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         )
 
     @supported_platform
-    @common_utils.parametrize("device", test_devices)
-    def test_inputs_are_realized(self, device):
-        is_requires_grad = False if device == "cpu" else False
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
+    def test_inputs_are_realized(self):
         def f(q, k, v):
-            x = torch.randn(1024, device=device)
+            x = torch.randn(1024, device="cuda")
             x = x * 2
 
             def func(qk, b, h, q, kv):
@@ -1849,19 +1847,18 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             return flex_attention(q.sin(), k, v, score_mod=func).cos()
 
         q, k, v = (
-            torch.randn(1, 8, 1024, 64, device=device, requires_grad=is_requires_grad)
+            torch.randn(1, 8, 1024, 64, device="cuda", requires_grad=True)
             for _ in range(3)
         )
         ref = f(q, k, v)
         out = torch.compile(f)(q, k, v)
         self.assertTrue((ref - out).abs().mean() < 1e-2)
-        if device == "cpu":
-            gradOut = torch.randn_like(q)
+        gradOut = torch.randn_like(q)
 
-            ref_grads = torch.autograd.grad(ref, (q, k, v), gradOut)
-            out_grads = torch.autograd.grad(out, (q, k, v), gradOut)
-            for ref, out in zip(ref_grads, out_grads):
-                self.assertTrue((ref - out).abs().mean() < 1e-2)
+        ref_grads = torch.autograd.grad(ref, (q, k, v), gradOut)
+        out_grads = torch.autograd.grad(out, (q, k, v), gradOut)
+        for ref, out in zip(ref_grads, out_grads):
+            self.assertTrue((ref - out).abs().mean() < 1e-2)
 
     @supported_platform
     @common_utils.parametrize("device", test_devices)
@@ -1906,7 +1903,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         self.assertEqual(block_mask1.sparsity(), block_mask2.sparsity())
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     def test_epilogue_fused(self):
         @torch.compile
         def f(q, k, v):
@@ -1973,7 +1970,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         self.run_test_with_paged_attention(score_mod, device=device)
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     @skip("TODO: Figure out why this is erroring")
     @patch.object(torch._inductor.config, "max_autotune", True)
     def test_max_autotune_with_captured(self):
@@ -2002,7 +1999,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         )
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     def test_autograd_function_in_score_mod(self):
         class ApplyMask(torch.autograd.Function):
             generate_vmap_rule = True
@@ -2134,7 +2131,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         self.assertEqual(auto_mask.to_dense(), manual_mask.to_dense())
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     @common_utils.parametrize("dtype", test_dtypes)
     @common_utils.parametrize("score_mod", [_identity, _causal])
     def test_logsumexp_correctness(self, dtype, score_mod):
@@ -2181,7 +2178,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         )
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     def test_logsumexp_only_return(self):
         make_tensor = functools.partial(
             torch.randn,
@@ -2205,7 +2202,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         )
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     @common_utils.parametrize(
         "score_mod", [_identity, _causal, _times_two, _squared, _trig, _trig2]
     )
@@ -2228,7 +2225,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         )
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     def test_eager_backward_strides(self):
         class Repro(torch.nn.Module):
             def __init__(self):
@@ -2257,7 +2254,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         out.backward(torch.ones_like(out))
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     def test_differentiable_logsumexp_gradcheck(self):
         make_tensor = functools.partial(
             torch.randn,
@@ -2280,7 +2277,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         )
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     def test_differentiable_logsumexp_compiled(self):
         make_tensor = functools.partial(
             torch.randn,
@@ -2318,7 +2315,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
 
     # Use weird mask to test reusing block_mask does work well.
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     def test_block_mask_reuse_with_weird_mask(self):
         def mask(b, h, q, kv):
             return (kv < 256) | (kv >= 2048)
@@ -2378,7 +2375,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         )
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     def test_float32_matmul_precision(self):
         make_tensor = functools.partial(
             torch.zeros,
@@ -2410,7 +2407,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         torch.testing.assert_close(grads_eager, grads_compile)
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     @common_utils.parametrize("score_mod_name", ["_head_offset"])
     @common_utils.parametrize("mode", ["eager", "aot_eager"])
     def test_captured_score_mod_aot_eager_gradcheck(
@@ -2435,7 +2432,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         )
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     @common_utils.parametrize("mode", ["eager", "aot_eager"])
     def test_document_masking_edge_case(self, mode):
         document_masks = torch.full((2, 128), 0, dtype=torch.int32, device="cuda")
@@ -2564,7 +2561,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         self.run_test(noop_mod, torch.float32, B, H, S, D, B, H, S, D, block_mask, device=device)
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     def test_kernel_options_argument_is_respected(self):
         make_tensor = functools.partial(
             torch.randn,
@@ -2582,7 +2579,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         FileCheck().check("BLOCK_M : tl.constexpr = 16").run(code[0])
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     def test_comparison_vs_sdpa(self):
         def causal(score, b, h, q_idx, kv_idx):
             return torch.where(q_idx >= kv_idx, score, -float("inf"))
@@ -2669,7 +2666,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         )
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     def test_head_bias_req_grad(self):
         B, H, S, D = 1, 4, 256, 64
         bias = torch.randn(H, device="cuda", dtype=torch.float16, requires_grad=True)
@@ -2702,7 +2699,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         )
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     def test_comparison_vs_sdpa_with_learnable_bias(self):
         # 1-dimensional bias:
         B, H, S, D = 1, 1, 256, 64
@@ -2917,10 +2914,11 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         self.run_test_with_call(attention, dtype=torch.float, Q_S=S - 1, KV_S=S - 1, device=device)
 
     @supported_platform
-    @common_utils.parametrize("device", test_devices)
-    def test_modular_indexing(self, device):
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
+    def test_modular_indexing(self):
         B, H, N, D = 100, 12, 128, 64
         dtype = torch.bfloat16
+        device = torch.device("cuda")
 
         class Attention(torch.nn.Module):
             def __init__(self):
@@ -2943,8 +2941,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
 
             return score_mod
 
-        m = Attention().cuda() if device=="cuda" else Attention()
-        m = m.eval().to(dtype)
+        m = Attention().cuda().eval().to(dtype)
         m = torch.compile(m, mode="default", fullgraph=False)
 
         q = torch.randn(B, H, N, D, device=device, dtype=dtype)
@@ -2952,9 +2949,8 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         v = torch.randn(B, H, N, D, device=device, dtype=dtype)
 
         m(q, k, v)
-
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     def test_force_write_lse(self):
         dtype = torch.float32
         make_tensor = functools.partial(
@@ -2978,7 +2974,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         torch.testing.assert_close(lse_eager, lse_paged, atol=3e-3, rtol=0)
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     @common_utils.parametrize("backend", ["flex_attention", "flex_decode", "eager"])
     def test_lse_masked_output(self, backend):
         if backend == "flex_decode":
@@ -3095,7 +3091,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
   
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     def test_mixed_device_error_message(self):
         # Create tensors on different devices
         cpu_tensor = torch.randn(2, 2, 128, 16, device="cpu")
@@ -3114,7 +3110,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             flex_attention(query, key, value)
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     def test_invalid_block_size(self):
         # Create tensors on different devices
         q, k, v = (torch.randn(1, 8, 128, 64, device="cuda") for _ in range(3))
@@ -3128,7 +3124,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             torch.compile(flex_attention)(q, k, v, block_mask=block_mask)
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     def test_small_q_kv_len(self):
         make_tensor = functools.partial(
             torch.ones,
@@ -3197,8 +3193,8 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             torch.compile(flex_attention)(query, key, value, block_mask=block_mask)
 
     @supported_platform
-    @common_utils.parametrize("device", test_devices)
-    def test_free_symbol_dynamic(self, device):
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
+    def test_free_symbol_dynamic(self):
         def batch_flip_causal(b, h, q_idx, kv_idx):
             return (q_idx >= kv_idx) & (b % 2 == 0)
 
@@ -3208,7 +3204,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
                 self.qkv = torch.nn.Linear(dim, 3 * dim)
                 self.n_head = n_head
                 self.head_dim = dim // n_head
-            @torch.no_grad
+
             def forward(self, x, block_mask=None):
                 B, T, C = x.size()
                 qkv = self.qkv(x).view(B, T, 3, self.n_head, self.head_dim)
@@ -3222,7 +3218,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
                 )
                 return y.transpose(1, 2).contiguous().view(B, T, C)
 
-        model = SimpleAttention().to(device).eval()
+        model = SimpleAttention().cuda()
         model.compile(mode="default", dynamic=True)
         sequence_len = 256
 
@@ -3230,7 +3226,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         torch._dynamo.reset()
         for batch_shape in [4, 16, 32]:
             # Create dense mask
-            rand_mask = torch.randint(0, 2, (batch_shape, sequence_len), requires_grad=False).to(device).bool()
+            rand_mask = torch.randint(0, 2, (batch_shape, sequence_len)).cuda().bool()
             block_mask = torch.compile(create_block_mask, dynamic=True)(
                 B=batch_shape,
                 BLOCK_SIZE=128,
@@ -3238,14 +3234,15 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
                 H=None,
                 Q_LEN=sequence_len,
                 KV_LEN=sequence_len,
-                device=device,
+                device="cuda",
             )
 
             # Run forward pass
-            x = torch.randn(batch_shape, sequence_len, 512, requires_grad=False).to(device)
+            x = torch.randn(batch_shape, sequence_len, 512).cuda()
             y = model(x, block_mask=block_mask)
 
         self.assertEqual(torch._dynamo.utils.counters["aot_autograd"]["ok"], 2)
+
 
     @supported_platform
     @common_utils.parametrize("device", test_devices)
@@ -3291,7 +3288,7 @@ def forward(self, child_4 : torch.Tensor, child_5 : torch.Tensor, child_6 : torc
         )
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     def test_fw_bw_graph_correctness(self):
         cnt = CompileCounterWithBackend("aot_eager")
         make_tensor = functools.partial(
@@ -3515,7 +3512,7 @@ class TestBlockMask(InductorTestCase):
             )
 
     @supported_platform
-    @unittest.skipIf(not is_test_with_cuda, "Only test on cuda")
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     def test_block_mask_device_change(self):
         offset = torch.zeros(8, device="cuda")
 
