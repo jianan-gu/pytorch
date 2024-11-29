@@ -2,11 +2,12 @@
 # flake8: noqa: B950
 
 import functools
+import unittest
 from collections import namedtuple
 from typing import Callable, Optional, Tuple, Union
 from unittest import expectedFailure, skipUnless
 from unittest.mock import patch
-import unittest
+
 import torch
 from torch._inductor.test_case import TestCase as InductorTestCase
 from torch._inductor.utils import run_and_get_code
@@ -28,14 +29,20 @@ from torch.utils._triton import has_triton
 
 # Skip tests if Triton is not available
 supported_platform = skipUnless(
-    torch.cpu.is_available() or
-    (torch.cuda.is_available()
-    and has_triton()
-    and torch.cuda.get_device_capability() >= (8, 0)),
+    torch.cpu.is_available()
+    or (
+        torch.cuda.is_available()
+        and has_triton()
+        and torch.cuda.get_device_capability() >= (8, 0)
+    ),
     "Requires CUDA and Triton, or CPU",
 )
-TEST_ON_CUDA = torch.cuda.is_available() and torch.utils._triton.has_triton() and torch.cuda.get_device_capability() >= (8, 0)
-test_devices = ["cpu", "cuda"] if  TEST_ON_CUDA else ["cpu"]
+TEST_ON_CUDA = (
+    torch.cuda.is_available()
+    and torch.utils._triton.has_triton()
+    and torch.cuda.get_device_capability() >= (8, 0)
+)
+test_devices = ["cpu", "cuda"] if TEST_ON_CUDA else ["cpu"]
 Tolerances = namedtuple("Tolerances", ["atol", "rtol"])
 torch.set_float32_matmul_precision("high")
 
@@ -69,9 +76,10 @@ if TEST_ON_CUDA and not PLATFORM_SUPPORTS_BF16:
     test_dtypes = [torch.float16, torch.float32]
 else:
     test_dtypes = [torch.float32, torch.bfloat16, torch.float16]
-test_dtypes_fast ={"cuda": torch.float16, "cpu":torch.float32}
+test_dtypes_fast = {"cuda": torch.float16, "cpu": torch.float32}
 
 test_page_sizes = [64, 128, 256]
+
 
 # --------- Useful score mod functions for testing ---------
 def _causal(
@@ -297,7 +305,7 @@ class TestFlexDecoding(InductorTestCase):
         KV_S: int = S,
         V_D: int = D,
         block_mask: Optional[BlockMask] = None,
-        device: str="cuda",
+        device: str = "cuda",
     ):
         if device == "cpu":
             is_return_lse = False
@@ -317,10 +325,16 @@ class TestFlexDecoding(InductorTestCase):
             requires_grad=False,
         )
         k = torch.randn(
-            (KV_B, KV_H, KV_S, Q_D), dtype=dtype, device=device, requires_grad=is_requires_grad
+            (KV_B, KV_H, KV_S, Q_D),
+            dtype=dtype,
+            device=device,
+            requires_grad=is_requires_grad,
         )
         v = torch.randn(
-            (KV_B, KV_H, KV_S, V_D), dtype=dtype, device=device, requires_grad=is_requires_grad
+            (KV_B, KV_H, KV_S, V_D),
+            dtype=dtype,
+            device=device,
+            requires_grad=is_requires_grad,
         )
         q_ref, k_ref, v_ref = query_key_value_clones(q, k, v)
         q_gold, k_gold, v_gold = query_key_value_clones(q, k, v, torch.float64)
@@ -330,9 +344,15 @@ class TestFlexDecoding(InductorTestCase):
         )
         compiled_sdpa = torch.compile(sdpa_partial)
         if is_return_lse:
-            golden_out, gold_lse = sdpa_partial(q_gold, k_gold, v_gold, return_lse=is_return_lse)
-            ref_out, ref_lse = sdpa_partial(q_ref, k_ref, v_ref, return_lse=is_return_lse)
-            compiled_out, compiled_lse = compiled_sdpa(q, k, v, return_lse=is_return_lse)
+            golden_out, gold_lse = sdpa_partial(
+                q_gold, k_gold, v_gold, return_lse=is_return_lse
+            )
+            ref_out, ref_lse = sdpa_partial(
+                q_ref, k_ref, v_ref, return_lse=is_return_lse
+            )
+            compiled_out, compiled_lse = compiled_sdpa(
+                q, k, v, return_lse=is_return_lse
+            )
         else:
             golden_out = sdpa_partial(q_gold, k_gold, v_gold, return_lse=is_return_lse)
             ref_out = sdpa_partial(q_ref, k_ref, v_ref, return_lse=is_return_lse)
@@ -363,7 +383,7 @@ class TestFlexDecoding(InductorTestCase):
         KV_H: int = Hkv,
         KV_S: int = S,
         V_D: int = D,
-        device: str="cuda",
+        device: str = "cuda",
     ):
         if not golden_call:
             golden_call = sdpa_call
@@ -402,7 +422,7 @@ class TestFlexDecoding(InductorTestCase):
         block_mask,
         dtype: torch.dtype = torch.float16,
         page_size: int = 128,
-        device: str="cuda",
+        device: str = "cuda",
     ):
         assert block_mask is not None, "Must provide block_mask"
         Q_B, Q_H, Q_S, _ = q.shape
@@ -434,7 +454,9 @@ class TestFlexDecoding(InductorTestCase):
         )
 
         # "randomly" initialize the page table
-        paged_attention = PagedAttention(n_pages, page_size, max_batch_size, device=device)
+        paged_attention = PagedAttention(
+            n_pages, page_size, max_batch_size, device=device
+        )
         batch_reserve(
             paged_attention,
             torch.tensor([KV_S // 4, KV_S // 2, KV_S // 4, KV_S // 3], device=device),
@@ -470,7 +492,7 @@ class TestFlexDecoding(InductorTestCase):
         v: Tensor,
         dtype: torch.dtype = torch.float16,
         block_mask: Optional[BlockMask] = None,
-        device: str="cuda",
+        device: str = "cuda",
     ):
         Q_B, Q_H, KV_H = q.shape[0], q.shape[1], k.shape[1]
 
@@ -483,16 +505,23 @@ class TestFlexDecoding(InductorTestCase):
             converted_block_mask,
             converted_score_mod,
         ) = self.preprocess_paged_attention(
-            score_mod, q, k, v, block_mask, dtype, block_mask.BLOCK_SIZE[1], device=device
+            score_mod,
+            q,
+            k,
+            v,
+            block_mask,
+            dtype,
+            block_mask.BLOCK_SIZE[1],
+            device=device,
         )
-        
+
         compiled_sdpa = torch.compile(flex_attention)
 
         # compute
-        return_lse=True
+        return_lse = True
         if device == "cpu":
-            return_lse=False
-            compiled_lse=None
+            return_lse = False
+            compiled_lse = None
             compiled_out = compiled_sdpa(
                 q,
                 k_cache,
@@ -502,7 +531,7 @@ class TestFlexDecoding(InductorTestCase):
                 score_mod=converted_score_mod,
                 enable_gqa=(not Q_H == KV_H),
             )
-           
+
         else:
             compiled_out, compiled_lse = compiled_sdpa(
                 q,
@@ -528,7 +557,7 @@ class TestFlexDecoding(InductorTestCase):
         KV_S: int = S,
         V_D: int = D,
         block_mask: Optional[BlockMask] = None,
-        device: str="cuda",
+        device: str = "cuda",
     ):
         if TEST_WITH_ROCM and Q_H != KV_H:
             self.skipTest("enable_gqa=True is unsupported on ROCM, for now")
@@ -555,7 +584,7 @@ class TestFlexDecoding(InductorTestCase):
         )
         golden_out, golden_lse = sdpa_partial(q_gold, k_gold, v_gold, return_lse=True)
         ref_out, ref_lse = sdpa_partial(q_ref, k_ref, v_ref, return_lse=True)
-        
+
         compiled_out, compiled_lse = self.run_paged_attention(
             score_mod, q, k, v, dtype, block_mask, device=device
         )
@@ -586,7 +615,7 @@ class TestFlexDecoding(InductorTestCase):
         KV_H: int = Hkv,
         KV_S: int = S,
         V_D: int = D,
-        device: str="cuda",
+        device: str = "cuda",
     ):
         q = torch.randn(
             (Q_B, KV_H, Q_S * (Q_H // KV_H), Q_D),
@@ -661,12 +690,14 @@ class TestFlexDecoding(InductorTestCase):
     @common_utils.parametrize("score_mod", test_score_mods)
     @common_utils.parametrize("head_dims", test_Hq_Hkv)
     def test_builtin_score_mods(
-        self, device:str, dtype: torch.dtype, score_mod: Callable, head_dims
+        self, device: str, dtype: torch.dtype, score_mod: Callable, head_dims
     ):
         Hq, Hkv = head_dims
         assert Hq % Hkv == 0
         self.run_test(score_mod, dtype, Q_H=Hq, KV_H=Hkv, device=device)
-        self.run_test_with_paged_attention(score_mod, dtype, Q_H=Hq, KV_H=Hkv, device=device)
+        self.run_test_with_paged_attention(
+            score_mod, dtype, Q_H=Hq, KV_H=Hkv, device=device
+        )
 
     @supported_platform
     @common_utils.parametrize("device", test_devices)
@@ -675,7 +706,7 @@ class TestFlexDecoding(InductorTestCase):
     @common_utils.parametrize("page_size", test_page_sizes)
     def test_paged_attention_page_size(
         self,
-        device:str,
+        device: str,
         score_mod: Callable,
         head_dims: Tuple[int, int],
         page_size: int,
@@ -693,7 +724,9 @@ class TestFlexDecoding(InductorTestCase):
         mod = generate_causal_offset(
             torch.tensor(192, device=device, dtype=torch.int32)
         )
-        block_mask = create_block_mask(mod, B, 1, 1, S, BLOCK_SIZE=page_size, device=device)
+        block_mask = create_block_mask(
+            mod, B, 1, 1, S, BLOCK_SIZE=page_size, device=device
+        )
 
         self.run_test_with_paged_attention(
             score_mod,
@@ -704,7 +737,7 @@ class TestFlexDecoding(InductorTestCase):
             KV_H=Hkv,
             KV_S=S,
             block_mask=block_mask,
-            device=device
+            device=device,
         )
 
     @supported_platform
@@ -714,13 +747,15 @@ class TestFlexDecoding(InductorTestCase):
     @common_utils.parametrize("BLOCK_SIZE", test_block_size)
     def test_builtin_score_mods_different_block_size(
         self,
-        device:str,
+        device: str,
         dtype: torch.dtype,
         score_mod: Callable,
         BLOCK_SIZE: Union[int, Tuple[int, int]],
     ):
-        block_mask = create_block_mask(noop_mask, B, 1, S, S, BLOCK_SIZE=BLOCK_SIZE,device=device)
-        self.run_test(score_mod, dtype, block_mask=block_mask,device=device)
+        block_mask = create_block_mask(
+            noop_mask, B, 1, S, S, BLOCK_SIZE=BLOCK_SIZE, device=device
+        )
+        self.run_test(score_mod, dtype, block_mask=block_mask, device=device)
 
     def input_strides_1(B, H, S, D):
         return ((H * S * D, S * D, D, 1), 997)  # offset
@@ -746,7 +781,7 @@ class TestFlexDecoding(InductorTestCase):
     @common_utils.parametrize("k_s", test_input_strides)
     @common_utils.parametrize("v_s", test_input_strides)
     @common_utils.parametrize("head_dims", test_Hq_Hkv)
-    def test_strided_inputs(self, device:str, k_s, v_s, head_dims):
+    def test_strided_inputs(self, device: str, k_s, v_s, head_dims):
         dtype = test_dtypes_fast[device]
         Hq, Hkv = head_dims
         assert Hq % Hkv == 0
@@ -787,7 +822,9 @@ class TestFlexDecoding(InductorTestCase):
             ref_out, compiled_out, atol=tolerance.atol, rtol=tolerance.rtol
         )
 
-        paged_compiled_out, _ = self.run_paged_attention(score_mod, q, k, v, dtype, device=device)
+        paged_compiled_out, _ = self.run_paged_attention(
+            score_mod, q, k, v, dtype, device=device
+        )
         torch.testing.assert_close(
             ref_out, paged_compiled_out, atol=tolerance.atol, rtol=tolerance.rtol
         )
@@ -799,7 +836,7 @@ class TestFlexDecoding(InductorTestCase):
     @common_utils.parametrize("score_mod", test_score_mods)
     def test_kv_batch_broadcast(
         self,
-        device:str,
+        device: str,
         head_dims: Tuple[int, int],
         batch_dims: Tuple[int, int],
         score_mod: Callable,
@@ -814,24 +851,13 @@ class TestFlexDecoding(InductorTestCase):
         block_mask = create_block_mask(noop_mask, Bq, 1, 1, S, device=device)
 
         self.run_test(
-            score_mod,
-            dtype,
-            Bq,
-            Hq,
-            1,
-            D,
-            Bkv,
-            Hkv,
-            S,
-            D,
-            block_mask,
-            device=device
+            score_mod, dtype, Bq, Hq, 1, D, Bkv, Hkv, S, D, block_mask, device=device
         )
 
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     @common_utils.parametrize("dtype", test_dtypes)
-    def test_skip_odd_keys(self, device:str, dtype: torch.dtype):
+    def test_skip_odd_keys(self, device: str, dtype: torch.dtype):
         def score_mod(score, b, h, q, kv):
             return torch.where(kv % 2 == 0, score, float("-inf"))
 
@@ -841,7 +867,7 @@ class TestFlexDecoding(InductorTestCase):
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     @common_utils.parametrize("dtype", test_dtypes)
-    def test_function_composition(self, device:str, dtype: torch.dtype):
+    def test_function_composition(self, device: str, dtype: torch.dtype):
         def score_mod_1(score, b, h, m, n):
             return score + (m - n)
 
@@ -857,7 +883,7 @@ class TestFlexDecoding(InductorTestCase):
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     @common_utils.parametrize("dtype", test_dtypes)
-    def test_captured_buffers(self, device:str, dtype: torch.dtype):
+    def test_captured_buffers(self, device: str, dtype: torch.dtype):
         head_offset = torch.rand(Hq, device=device, dtype=dtype)
 
         def score_mod(score, b, h, m, n):
@@ -869,7 +895,7 @@ class TestFlexDecoding(InductorTestCase):
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     @common_utils.parametrize("dtype", test_dtypes)
-    def test_captured_buffers_all_dims(self, device:str, dtype: torch.dtype):
+    def test_captured_buffers_all_dims(self, device: str, dtype: torch.dtype):
         head_scale = torch.randn(Hq, device=device)
         batch_scale = torch.randn(B, device=device)
         kv_scale = torch.randn(S, device=device)
@@ -949,7 +975,9 @@ class TestFlexDecoding(InductorTestCase):
     @common_utils.parametrize("head_dims", [(D, D // 2), (D // 2, D)])
     def test_non_equal_head_dims(self, device, dtype, score_mod, head_dims):
         qk_d, v_d = head_dims
-        self.run_test(score_mod, dtype, B, Hq, 1, qk_d, B, Hkv, S, V_D=v_d, device=device)
+        self.run_test(
+            score_mod, dtype, B, Hq, 1, qk_d, B, Hkv, S, V_D=v_d, device=device
+        )
         self.run_test_with_paged_attention(
             score_mod, dtype, B, Hq, 1, qk_d, B, Hkv, S, V_D=v_d, device=device
         )
@@ -1010,6 +1038,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
     @common_utils.parametrize("device", test_devices)
     def test_silu_on_score(self, device):
         dtype = test_dtypes_fast[device]
+
         def silu_score(score, b, h, q, kv):
             return torch.nn.functional.silu(score)
 
@@ -1172,7 +1201,13 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             converted_block_mask1,
             converted_score_mod1,
         ) = self.preprocess_paged_attention(
-            scoremod_1, query, keys[0], values[0], block_mask, torch.float32, device=device
+            scoremod_1,
+            query,
+            keys[0],
+            values[0],
+            block_mask,
+            torch.float32,
+            device=device,
         )
         (
             k_cache2,
@@ -1180,7 +1215,13 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             converted_block_mask2,
             converted_score_mod2,
         ) = self.preprocess_paged_attention(
-            scoremod_2, query, keys[1], values[1], block_mask, torch.float32, device=device
+            scoremod_2,
+            query,
+            keys[1],
+            values[1],
+            block_mask,
+            torch.float32,
+            device=device,
         )
 
         def paged_f(q, k1, k2, v1, v2):
@@ -1247,7 +1288,13 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             converted_block_mask1,
             converted_score_mod1,
         ) = self.preprocess_paged_attention(
-            scoremod_1, query, keys[0], values[0], block_mask, torch.float32, device=device
+            scoremod_1,
+            query,
+            keys[0],
+            values[0],
+            block_mask,
+            torch.float32,
+            device=device,
         )
         (
             k_cache2,
@@ -1255,7 +1302,13 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             converted_block_mask2,
             converted_score_mod2,
         ) = self.preprocess_paged_attention(
-            scoremod_2, query, keys[1], values[1], block_mask, torch.float32, device=device
+            scoremod_2,
+            query,
+            keys[1],
+            values[1],
+            block_mask,
+            torch.float32,
+            device=device,
         )
         (
             k_cache3,
@@ -1263,7 +1316,13 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             converted_block_mask3,
             converted_score_mod3,
         ) = self.preprocess_paged_attention(
-            scoremod_1, query, keys[2], values[2], block_mask, torch.float32, device=device
+            scoremod_1,
+            query,
+            keys[2],
+            values[2],
+            block_mask,
+            torch.float32,
+            device=device,
         )
 
         paged_attention1 = functools.partial(
@@ -1325,8 +1384,8 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
     @common_utils.parametrize("device", test_devices)
     def test_mixed_dtypes_fails(self, device):
         query = torch.randn((1, 1, 8, 64), dtype=torch.float32, device=device)
-        key = torch.randn((1, 1, 1024, 64), dtype=torch.float16,  device=device)
-        value = torch.randn((1, 1, 1024, 64), dtype=torch.float16,  device=device)
+        key = torch.randn((1, 1, 1024, 64), dtype=torch.float16, device=device)
+        value = torch.randn((1, 1, 1024, 64), dtype=torch.float16, device=device)
         with self.assertRaisesRegex(
             ValueError, "Expected query, key, and value to have the same dtype"
         ):
@@ -1339,7 +1398,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         def score_mod(score, b, h, m, n):
             return score * 2
 
-        self.run_test(score_mod,  device=device)
+        self.run_test(score_mod, device=device)
         self.run_test_with_paged_attention(score_mod, device=device)
 
     @supported_platform
@@ -1366,15 +1425,24 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
     @common_utils.parametrize("device", test_devices)
     def test_fully_masked_out_rows_0_check_gqa(self, device):
         # Ensure fully masked out rows won't cause NaNs.
-        is_requires_grad=True if device == "cuda" else False
+        is_requires_grad = True if device == "cuda" else False
         query = torch.randn(
-            (B, Hq, S, D), dtype=torch.float32, device=device, requires_grad=True if device == "cuda" else False
+            (B, Hq, S, D),
+            dtype=torch.float32,
+            device=device,
+            requires_grad=True if device == "cuda" else False,
         )
         key = torch.randn(
-            (B, Hkv, S, D), dtype=torch.float32, device=device, requires_grad=True if device == "cuda" else False
+            (B, Hkv, S, D),
+            dtype=torch.float32,
+            device=device,
+            requires_grad=True if device == "cuda" else False,
         )
         value = torch.randn(
-            (B, Hkv, S, D), dtype=torch.float32, device=device, requires_grad=True if device == "cuda" else False
+            (B, Hkv, S, D),
+            dtype=torch.float32,
+            device=device,
+            requires_grad=True if device == "cuda" else False,
         )
 
         M = S // 2
@@ -1387,7 +1455,12 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         flex = torch.compile(flex_attention, dynamic=False)
         if device == "cuda":
             out, lse = flex(
-                query, key, value, block_mask=block_mask, enable_gqa=True, return_lse=True
+                query,
+                key,
+                value,
+                block_mask=block_mask,
+                enable_gqa=True,
+                return_lse=True,
             )
             self.assertEqual(out[:, :, M:, :].sum(), 0)
             self.assertTrue((lse[:, :, M:] == -float("inf")).all())
@@ -1397,7 +1470,12 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             self.assertEqual(query.grad[:, :, M:, :].sum(), 0)
         else:
             out = flex(
-                query, key, value, block_mask=block_mask, enable_gqa=True, return_lse=False
+                query,
+                key,
+                value,
+                block_mask=block_mask,
+                enable_gqa=True,
+                return_lse=False,
             )
             self.assertEqual(out[:, :, M:, :].sum(), 0)
 
@@ -1414,12 +1492,21 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             torch.nn.functional.scaled_dot_product_attention, attn_mask=sdpa_mask
         )
 
-        self.run_test_with_call(attention, sdpa_attention,dtype=dtype, Q_H=16, KV_H=16, Q_S=8, device=device)
+        self.run_test_with_call(
+            attention,
+            sdpa_attention,
+            dtype=dtype,
+            Q_H=16,
+            KV_H=16,
+            Q_S=8,
+            device=device,
+        )
 
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     def test_windowed_full_mask_vs_sdpa(self, device):
         dtype = test_dtypes_fast[device]
+
         def mask_mod(b, h, q, kv):
             return q + 1000 >= kv
 
@@ -1435,12 +1522,21 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             torch.nn.functional.scaled_dot_product_attention, attn_mask=sdpa_mask
         )
 
-        self.run_test_with_call(attention, sdpa_attention,dtype=dtype, Q_H=16, KV_H=16, Q_S=8, device=device)
+        self.run_test_with_call(
+            attention,
+            sdpa_attention,
+            dtype=dtype,
+            Q_H=16,
+            KV_H=16,
+            Q_S=8,
+            device=device,
+        )
 
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     def test_windowed_partial_block_vs_sdpa(self, device):
         dtype = test_dtypes_fast[device]
+
         def mask_mod(b, h, q, kv):
             return q + 1000 >= kv
 
@@ -1452,7 +1548,15 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             torch.nn.functional.scaled_dot_product_attention, attn_mask=sdpa_mask
         )
 
-        self.run_test_with_call(attention, sdpa_attention, dtype=dtype, Q_H=16, KV_H=16, Q_S=8, device=device)
+        self.run_test_with_call(
+            attention,
+            sdpa_attention,
+            dtype=dtype,
+            Q_H=16,
+            KV_H=16,
+            Q_S=8,
+            device=device,
+        )
 
     @supported_platform
     @common_utils.parametrize("device", test_devices)
@@ -1463,33 +1567,56 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         sdpa_mask = _get_windowed_sdpa_mask(8, S, 1000, device=device)
 
         self.run_test_with_call_paged_attention(
-            score_mod, None, sdpa_mask, dtype=dtype, Q_H=16, KV_H=16, Q_S=8, device=device
+            score_mod,
+            None,
+            sdpa_mask,
+            dtype=dtype,
+            Q_H=16,
+            KV_H=16,
+            Q_S=8,
+            device=device,
         )
 
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     def test_windowed_full_mask_vs_sdpa_paged_attention(self, device):
         dtype = test_dtypes_fast[device]
+
         def mask_mod(b, h, q, kv):
             return q + 1000 >= kv
 
         score_mod = _generate_windowed(1000)
         sdpa_mask = _get_windowed_sdpa_mask(8, S, 1000, device=device)
         self.run_test_with_call_paged_attention(
-            score_mod, mask_mod, sdpa_mask, dtype=dtype, Q_H=16, KV_H=16, Q_S=8, device=device
+            score_mod,
+            mask_mod,
+            sdpa_mask,
+            dtype=dtype,
+            Q_H=16,
+            KV_H=16,
+            Q_S=8,
+            device=device,
         )
 
     @supported_platform
     @common_utils.parametrize("device", test_devices)
     def test_windowed_partial_block_vs_sdpa_paged_attention(self, device):
         dtype = test_dtypes_fast[device]
+
         def mask_mod(b, h, q, kv):
             return q + 1000 >= kv
 
         sdpa_mask = _get_windowed_sdpa_mask(8, S, 1000, device=device)
 
         self.run_test_with_call_paged_attention(
-            None, mask_mod, sdpa_mask, dtype=dtype, Q_H=16, KV_H=16, Q_S=8, device=device
+            None,
+            mask_mod,
+            sdpa_mask,
+            dtype=dtype,
+            Q_H=16,
+            KV_H=16,
+            Q_S=8,
+            device=device,
         )
 
     @supported_platform
@@ -1607,7 +1734,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             KV_H=1,
             KV_S=65,
             V_D=16,
-            device=device
+            device=device,
         )
         self.run_test_with_paged_attention(
             score_mod=None,
@@ -1621,7 +1748,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             KV_H=1,
             KV_S=65,
             V_D=16,
-            device=device
+            device=device,
         )
 
     @supported_platform
