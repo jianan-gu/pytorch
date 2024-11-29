@@ -520,8 +520,13 @@ class CppFlexAttentionTemplate(CppTemplate):
         self,
         kernel,
         template_buffer_node: Optional[ir.CppTemplateBuffer] = None,
+        epilogue_nodes: Optional[List[ir.IRNode]] = None,
         **kwargs,
     ) -> str:
+        if epilogue_nodes is not None:
+            raise NotImplementedError(
+                "Unsupported for `epilogue_nodes` in CppFlexAttentionTemplate."
+            )
         # Query (Batch x Num_heads  x Q_seq_len  x Dim_per_head)
         #     -> (Batch x Q_seq_len  x Num_heads  x Dim_per_head)
         #  Key   (Batch x Num_heads  x KV_seq_len x Dim_per_head)
