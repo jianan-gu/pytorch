@@ -748,6 +748,9 @@ def flex_attention(
                 "torch.compile on CPU only supports inference and `return_lse` is not supported yet."
             )
 
+        if len({query.get_name(), key.get_name(), value.get_name()}) != 3:
+            raise NotImplementedError("Unsupported for now if query, key, value are the same buffer.")
+
         placeholder_inps = [
             create_placeholder(name, dtype, query.get_device())
             for name, dtype in [
