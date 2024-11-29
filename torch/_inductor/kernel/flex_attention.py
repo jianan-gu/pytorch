@@ -748,9 +748,6 @@ def flex_attention(
                 "torch.compile on CPU only supports inference and `return_lse` is not supported yet."
             )
 
-        if len({query.get_name(), key.get_name(), value.get_name()}) != 3:
-            raise NotImplementedError("Unsupported for now if query, key, value are the same buffer.")
-
         placeholder_inps = [
             create_placeholder(name, dtype, query.get_device())
             for name, dtype in [
@@ -810,6 +807,10 @@ def flex_attention(
                 full_q_indices,
             ]
         )
+
+        if len({query.get_name(), key.get_name(), value.get_name()}) != 3:
+            raise NotImplementedError("Unsupported for now if query, key, value are the same buffer.")
+
         score_mod_other_buffers = maybe_realize(score_mod_other_buffers)
         mask_mod_other_buffers = maybe_realize(mask_mod_other_buffers)
         Bq, Hq, seq_len_q, qk_head_dim = query.get_size()
