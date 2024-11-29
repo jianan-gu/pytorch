@@ -16,7 +16,7 @@ from ..virtualized import V
 
 log = logging.getLogger(__name__)
 
-ATTENTION_TEMPLATE = r"""
+FLEX_ATTENTION_TEMPLATE = r"""
 {{template.header().getvalue()}}
 #include <ATen/native/CPUBlas.h>
 
@@ -198,9 +198,6 @@ ATTENTION_TEMPLATE = r"""
               qk_data,
               cur_kvSplitSize);
 
-            // mask -inf in block padding length in last kvBlock
-            //_block_padding_mask_kernel<accum_t>(qk_data, cur_qSplitSize*cur_kvSplitSize);
-
             {%- if score_mod and mask_mod %}
             // apply score mod function
             for (int row = 0; row < cur_qSplitSize; ++row) {
@@ -327,7 +324,7 @@ ATTENTION_TEMPLATE = r"""
 }
 """
 
-class CppMHATemplate(CppTemplate):
+class CppFlexAttentionTemplate(CppTemplate):
     def __init__(
         self,
         input_nodes,
@@ -498,7 +495,7 @@ class CppMHATemplate(CppTemplate):
             return output
 
         template = DataProcessorTemplateWrapper(
-            cpp_flex_attention_template,
+            CppFlexAttentionTemplate,
             preprocessor,
             postprocessor,
             input_nodes=input_nodes,
@@ -569,4 +566,4 @@ class CppMHATemplate(CppTemplate):
                 stack.enter_context(
                     patch.object(V.graph, "get_dtype", self._fake_get_dtype(buf))
                 )            
-            return self._template_from_string(ATTENTION_TEMPLATE).render(**options)
+            return self._template_from_string(FLEX_ATTENTION_TEMPLATE).render(**options)
