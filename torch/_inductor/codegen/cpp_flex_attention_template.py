@@ -462,6 +462,9 @@ class CppFlexAttentionTemplate(CppTemplate):
             tuple(),
         )
 
+        from ..loop_body import MemoryUsageType
+        assert all(mem.buffer_name in kernel_group.args.input_buffers for mem in body.memory_usage[MemoryUsageType.LOAD]), "Unsupported for now"
+
         bodies.append(body)
         var_sizes_list.append((var_sizes, ()))
 
