@@ -21,17 +21,7 @@ FLEX_ATTENTION_TEMPLATE = r"""
 #include <ATen/native/CPUBlas.h>
 
 {%- set kernel_args = {"query": query, "key": key, "value": value, "kv_num_blocks": kv_num_blocks, "kv_indices": kv_indices, "full_kv_num_blocks": full_kv_num_blocks} %}
-{%- if score_mod_other_buffers is not none %}
-{%- for i in range(score_mod_other_buffers | length) %}
-{%- set _ = kernel_args.update({"score_others_" ~ i: score_mod_other_buffers[i]}) %}
-{%- endfor %}
-{%- endif %}
-
-{%- if mask_mod_other_buffers is not none %}
-{%- for i in range(mask_mod_other_buffers | length) %}
-{%- set _ = kernel_args.update({"mask_others_" ~ i: mask_mod_other_buffers[i]}) %}
-{%- endfor %}
-{%- endif %}
+{%- set kernel_args = template.update_kernel_args(kernel_args) %}
 {{kernel.def_kernel(inputs=kernel_args, outputs={"output": output})}}
 {
   int64_t kvBlockSize = {{kvBlockSize}};
@@ -338,7 +328,7 @@ class CppFlexAttentionTemplate(CppTemplate):
         fake_buffers,
         len_score_other,
         len_mask_other,
-        other_buffer_name_to_buffer,
+        kernel_input_name_to_buffer,
     ) -> None:
         assert layout.dtype in [torch.float, torch.float16, torch.bfloat16]
         super().__init__("mha", input_nodes, layout, parallel_num_threads())
@@ -364,42 +354,46 @@ class CppFlexAttentionTemplate(CppTemplate):
         self.fake_buffers = fake_buffers
         self.len_score_other = len_score_other
         self.len_mask_other = len_mask_other
-        self.other_buffer_name_to_buffer = other_buffer_name_to_buffer
+        self.kernel_input_name_to_buffer = kernel_input_name_to_buffer
         self.score_mod_other_buffers = self.input_nodes[5 + self.other_buffer_input_offset:5 + self.other_buffer_input_offset + self.len_score_other] if self.has_other_buffer else None
         self.mask_mod_other_buffers=self.input_nodes[5 + self.other_buffer_input_offset + self.len_score_other:] if self.has_other_buffer else None
-        # TODO: is this needed to be set to self?
-        self.other_ptr_to_name = {}
-        
-        self.other_ptr_to_arg = {}
+        self.other_ptr_data = {}
+
+    def update_kernel_args(self, kernel_args):
+        kernel_args.update(self.kernel_input_name_to_buffer)
+        return kernel_args
 
     def generate_other_buffer(self, buf_list, start_ptr, start_offset, len_attr, kernel_args):
-        # TODO: remove duplicated code
+        kernel_input_name_to_buffer_name = {
+            key: value.get_name() for key, value in self.kernel_input_name_to_buffer.items()
+        }
+
         def get_arg(name):
-            return self.other_buffer_name_to_buffer.get(name)
+            return kernel_input_name_to_buffer_name.get(name)
 
         def get_arg_name(name):
-            arg = self.other_buffer_name_to_buffer.get(name)
-            return kernel_args.input_buffers.get(arg)
-        
-        if self.has_other_buffer:
-            if start_offset == -1:
-                start_offset = getattr(self, len_attr)
-            
-            # TODO: remove dupliacted code
-            for i in range(getattr(self, len_attr)):
-                if f"in_ptr{start_ptr + start_offset + i}" not in self.other_ptr_to_name:
-                    self.other_ptr_to_name.update({f"in_ptr{start_ptr + start_offset + i}": f"{get_arg_name(f'{buf_list}_{i}')}"})
-            
-            for i in range(getattr(self, len_attr)):
-                if f"in_ptr{start_ptr + start_offset + i}" not in self.other_ptr_to_arg:
-                    self.other_ptr_to_arg.update({f"in_ptr{start_ptr + start_offset + i}": f"{get_arg(f'{buf_list}_{i}')}"})
+            return kernel_args.input_buffers.get(get_arg(name))
 
-            return "\n".join(
-                f"auto {ptr} = {name};"
-                for ptr, name in self.other_ptr_to_name.items()
-            )
-        else:
+        if not self.has_other_buffer:
             return ""
+
+        if start_offset == -1:
+            start_offset = getattr(self, len_attr)
+
+        length = getattr(self, len_attr)
+        for i in range(length):
+            pointer = f"in_ptr{start_ptr + start_offset + i}"
+            buffer_key = f"{buf_list}_{i}"
+            if pointer not in self.other_ptr_data:
+                self.other_ptr_data[pointer] = (
+                    get_arg_name(buffer_key),
+                    get_arg(buffer_key),
+                )
+
+        return "\n".join(
+            f"auto {ptr} = {name};"
+            for ptr, (name, _) in self.other_ptr_data.items()
+        )
 
     def modification(self, subgraph_buffer, output_name, output_idx):
         if self.has_other_buffer:
@@ -422,10 +416,9 @@ class CppFlexAttentionTemplate(CppTemplate):
             "kv_idx": "in_ptr4",
         }
         if self.has_other_buffer:
-            start_ptr = 5
             kernel_input_args.update({
-                name: ptr 
-                for ptr, name in self.other_ptr_to_arg.items()
+                arg: ptr 
+                for ptr, (_, arg) in self.other_ptr_data.items()
             })
 
         kernel_output_args = {
@@ -486,7 +479,7 @@ class CppFlexAttentionTemplate(CppTemplate):
         fake_buffers,
         len_score_other,
         len_mask_other,
-        other_buffer_name_to_buffer,
+        kernel_input_name_to_buffer,
     ):
         def preprocessor(input_nodes, layout):
             return input_nodes, layout
@@ -509,7 +502,7 @@ class CppFlexAttentionTemplate(CppTemplate):
             fake_buffers=fake_buffers,
             len_score_other=len_score_other,
             len_mask_other=len_mask_other,
-            other_buffer_name_to_buffer=other_buffer_name_to_buffer,
+            kernel_input_name_to_buffer=kernel_input_name_to_buffer,
         )
         template.maybe_append_choice(choices)
         return template
