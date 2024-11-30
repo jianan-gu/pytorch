@@ -1,19 +1,22 @@
 # mypy: allow-untyped-defs
-import re
 import contextlib
 import logging
-import sympy
+import re
 from typing import List, Optional
 from unittest.mock import patch
 
+import sympy
+
 import torch
 import torch.utils
+
 from .. import ir
 from ..ir import TensorBox
 from ..select_algorithm import DataProcessorTemplateWrapper
 from ..utils import parallel_num_threads
-from .cpp_template import CppTemplate
 from ..virtualized import V
+from .cpp_template import CppTemplate
+
 
 log = logging.getLogger(__name__)
 
@@ -21,7 +24,8 @@ FLEX_ATTENTION_TEMPLATE = r"""
 {{template.header().getvalue()}}
 #include <ATen/native/CPUBlas.h>
 
-{%- set kernel_args = {"query": query, "key": key, "value": value, "kv_num_blocks": kv_num_blocks, "kv_indices": kv_indices, "full_kv_num_blocks": full_kv_num_blocks} %}
+{%- set kernel_args = {"query": query, "key": key, "value": value,
+                       "kv_num_blocks": kv_num_blocks, "kv_indices": kv_indices, "full_kv_num_blocks": full_kv_num_blocks} %}
 {%- set kernel_args = template.update_kernel_args(kernel_args) %}
 {{kernel.def_kernel(inputs=kernel_args, outputs={"output": output})}}
 {
@@ -170,7 +174,10 @@ FLEX_ATTENTION_TEMPLATE = r"""
             auto j_kvi = is_broadcast_head_kvi ? j/gqa_shards_kvi : j;
             auto kv_logical_data = kv_indices_data + i_kvi*kviStrideB + j_kvi*kviStrideH  + kv_block_num;
             if(use_kv_indice){
-                k_addr = k_data + i_kv * kStrideB + j_kv * kStrideH + (*kv_logical_data * kvBlockSize + kv_block_offset)  * kStrideN;
+                k_addr = k_data +
+                         i_kv * kStrideB +
+                         j_kv * kStrideH +
+                         (*kv_logical_data * kvBlockSize + kv_block_offset)  * kStrideN;
             }
 
             at::native::cpublas::gemm(
@@ -234,7 +241,7 @@ FLEX_ATTENTION_TEMPLATE = r"""
                 *qk_block = *out_ptr{{mask_buf_idx}}!=0 ?  *qk_block : -std::numeric_limits<accum_t>::infinity();
                 }
             }
-            {%- endif %}      
+            {%- endif %}
             // Update coefficients with Softmax
             accum_t tmp_max = 0, tmp_sum = 0, exp_tmp = 0;
             for (int64_t row = 0; row < cur_qSplitSize; ++row) {
@@ -276,7 +283,10 @@ FLEX_ATTENTION_TEMPLATE = r"""
             // Calculate Softmax(q @ k.T) @ v
             auto v_addr = v_data + i_kv * vStrideB + j_kv * vStrideH + n  * vStrideN;
             if(use_kv_indice){
-                v_addr = v_data + i_kv * vStrideB + j_kv * vStrideH + (*kv_logical_data * kvBlockSize + kv_block_offset)  * vStrideN;
+                v_addr = v_data +
+                         i_kv * vStrideB +
+                         j_kv * vStrideH +
+                         (*kv_logical_data * kvBlockSize + kv_block_offset)  * vStrideN;
             }
             at::native::cpublas::gemm(
               at::native::TransposeType::NoTranspose,
@@ -315,6 +325,7 @@ FLEX_ATTENTION_TEMPLATE = r"""
 }
 """
 
+
 class CppFlexAttentionTemplate(CppTemplate):
     def __init__(
         self,
@@ -336,19 +347,25 @@ class CppFlexAttentionTemplate(CppTemplate):
         self.scale = scale
         self.score_mod = score_mod
         self.mask_mod = mask_mod
-        self.score_buf_name = V.graph.register_buffer(self.score_mod) if self.score_mod else None
-        self.mask_buf_name = V.graph.register_buffer(self.mask_mod) if self.mask_mod else None
+        self.score_buf_name = (
+            V.graph.register_buffer(self.score_mod) if self.score_mod else None
+        )
+        self.mask_buf_name = (
+            V.graph.register_buffer(self.mask_mod) if self.mask_mod else None
+        )
 
         def get_idx(buf_name):
-            match = re.search(r'\d+', buf_name)
+            match = re.search(r"\d+", buf_name)
             assert match, f"incorrect score buf name: {buf_name}"
             return match.group()
 
-        self.score_buf_idx = get_idx(self.score_buf_name) if self.score_buf_name else None
+        self.score_buf_idx = (
+            get_idx(self.score_buf_name) if self.score_buf_name else None
+        )
         self.mask_buf_idx = get_idx(self.mask_buf_name) if self.mask_buf_name else None
         self.kv_block_size = kv_block_size
-        self.has_other_buffer=has_other_buffer
-        self.no_full_kv_block=no_full_kv_block
+        self.has_other_buffer = has_other_buffer
+        self.no_full_kv_block = no_full_kv_block
         self.other_buffer_input_offset = 1
         if self.no_full_kv_block:
             self.other_buffer_input_offset = 0
@@ -356,21 +373,41 @@ class CppFlexAttentionTemplate(CppTemplate):
         self.len_score_other = len_score_other
         self.len_mask_other = len_mask_other
         self.kernel_input_name_to_buffer = kernel_input_name_to_buffer
-        self.score_mod_other_buffers = self.input_nodes[5 + self.other_buffer_input_offset:5 + self.other_buffer_input_offset + self.len_score_other] if self.has_other_buffer else None
-        self.mask_mod_other_buffers=self.input_nodes[5 + self.other_buffer_input_offset + self.len_score_other:] if self.has_other_buffer else None
-        self.other_ptr_data = {}
+        self.score_mod_other_buffers = (
+            self.input_nodes[
+                5
+                + self.other_buffer_input_offset : 5
+                + self.other_buffer_input_offset
+                + self.len_score_other
+            ]
+            if self.has_other_buffer
+            else None
+        )
+        self.mask_mod_other_buffers = (
+            self.input_nodes[
+                5 + self.other_buffer_input_offset + self.len_score_other :
+            ]
+            if self.has_other_buffer
+            else None
+        )
+        self.other_ptr_data = {}  # type: ignore[var-annotated]
 
     def update_kernel_args(self, kernel_args):
-        kernel_args.update({
-            key: value 
-            for key, value in self.kernel_input_name_to_buffer.items()
-            if not isinstance(value, sympy.Symbol)
-        })     
+        kernel_args.update(
+            {
+                key: value
+                for key, value in self.kernel_input_name_to_buffer.items()
+                if not isinstance(value, sympy.Symbol)
+            }
+        )
         return kernel_args
 
-    def generate_other_buffer(self, buf_list, start_ptr, start_offset, len_attr, kernel_args):
+    def generate_other_buffer(
+        self, buf_list, start_ptr, start_offset, len_attr, kernel_args
+    ):
         kernel_input_name_to_buffer_name = {
-            key: value if isinstance(value, sympy.Symbol) else value.get_name() for key, value in self.kernel_input_name_to_buffer.items()
+            key: value if isinstance(value, sympy.Symbol) else value.get_name()
+            for key, value in self.kernel_input_name_to_buffer.items()
         }
 
         def get_arg(name):
@@ -378,7 +415,7 @@ class CppFlexAttentionTemplate(CppTemplate):
 
         def get_arg_name(name):
             if isinstance(get_arg(name), sympy.Symbol):
-                return kernel_args.sizevars.get(get_arg(name))            
+                return kernel_args.sizevars.get(get_arg(name))
             return kernel_args.input_buffers.get(get_arg(name))
 
         if not self.has_other_buffer:
@@ -398,8 +435,7 @@ class CppFlexAttentionTemplate(CppTemplate):
                 )
 
         return "\n".join(
-            f"auto {ptr} = {name};"
-            for ptr, (name, _) in self.other_ptr_data.items()
+            f"auto {ptr} = {name};" for ptr, (name, _) in self.other_ptr_data.items()
         )
 
     def modification(self, subgraph_buffer, output_name, output_idx):
@@ -407,9 +443,9 @@ class CppFlexAttentionTemplate(CppTemplate):
         subgraph_buffer_data = subgraph_buffer.data
         from ..loop_body import LoopBody
         from ..utils import sympy_index_symbol_with_prefix, SymT
-        from ..virtualized import ops, V
+        from ..virtualized import V
+        from .cpp import CppKernelProxy, KernelGroup
 
-        from .cpp import CppKernel, CppKernelProxy, KernelGroup
         kernel_group = KernelGroup()
         kernel_input_args = {
             "score": "in_ptr0",
@@ -419,21 +455,18 @@ class CppFlexAttentionTemplate(CppTemplate):
             "kv_idx": "in_ptr4",
         }
         if self.has_other_buffer:
-            kernel_input_args.update({
-                arg: ptr 
-                for ptr, (_, arg) in self.other_ptr_data.items()
-            })
+            kernel_input_args.update(
+                {arg: ptr for ptr, (_, arg) in self.other_ptr_data.items()}
+            )
 
-        kernel_output_args = {
-            output_name: f"out_ptr{output_idx}"
-        }
+        kernel_output_args = {output_name: f"out_ptr{output_idx}"}
 
         args = kernel_group.args
         for name, inp in kernel_input_args.items():
             args.input_buffers[name] = inp
 
         for name, inp in kernel_output_args.items():
-            args.output_buffers[name] = inp        
+            args.output_buffers[name] = inp
 
         kernel_group.args = args
 
@@ -441,12 +474,13 @@ class CppFlexAttentionTemplate(CppTemplate):
         bodies = []
         var_sizes_list = []
 
-        var_sizes = (tuple([]))
+        var_sizes = tuple([])  # type: ignore[var-annotated]  # noqa: C409
         output_index = 0
         var_ranges = {
             sympy_index_symbol_with_prefix(SymT.INDEX, i): sz
             for i, sz in enumerate(var_sizes)
-        }        
+        }
+
         def fn(*args):
             V.ops.store(
                 output_name,
@@ -463,14 +497,19 @@ class CppFlexAttentionTemplate(CppTemplate):
         )
 
         from ..loop_body import MemoryUsageType
-        assert all(mem.buffer_name in kernel_group.args.input_buffers for mem in body.memory_usage[MemoryUsageType.LOAD]), "All the buffers in the score and mask subgraph should be in kernel_group.args.input_buffers"
+
+        assert all(
+            mem.buffer_name in kernel_group.args.input_buffers
+            for mem in body.memory_usage[MemoryUsageType.LOAD]
+        ), "All the buffers in the score and mask subgraph should be in kernel_group.args.input_buffers"
 
         bodies.append(body)
         var_sizes_list.append((var_sizes, ()))
 
         cpp_kernel_proxy.codegen_loop_bodies(bodies, var_sizes_list)
         kernel_group.finalize_kernel(cpp_kernel_proxy, [])
-        return kernel_group.loops_code.getvalue()    
+        return kernel_group.loops_code.getvalue()
+
     @staticmethod
     def add_choices(
         choices,
@@ -533,6 +572,7 @@ class CppFlexAttentionTemplate(CppTemplate):
         #     -> (Batch x KV_seq_len x Num_heads  x Dim_per_head)
         #  Value (Batch x Num_heads  x KV_seq_len x Dim_per_head)
         #     -> (Batch x KV_seq_len x Num_heads  x Dim_per_head)
+
         query = kernel.permute(self.input_nodes[0], [0, 2, 1, 3])
         key = kernel.permute(self.input_nodes[1], [0, 2, 1, 3])
         value = kernel.permute(self.input_nodes[2], [0, 2, 1, 3])
@@ -547,7 +587,9 @@ class CppFlexAttentionTemplate(CppTemplate):
             value=value,
             kv_num_blocks=self.input_nodes[3],
             kv_indices=self.input_nodes[4],
-            full_kv_num_blocks=self.input_nodes[5] if not self.no_full_kv_block else None,
+            full_kv_num_blocks=self.input_nodes[5]
+            if not self.no_full_kv_block
+            else None,
             score_mod_other_buffers=self.score_mod_other_buffers,
             mask_mod_other_buffers=self.mask_mod_other_buffers,
             scale=self.scale,
@@ -569,5 +611,5 @@ class CppFlexAttentionTemplate(CppTemplate):
             for buf in self.fake_buffers:
                 stack.enter_context(
                     patch.object(V.graph, "get_dtype", self._fake_get_dtype(buf))
-                )            
+                )
             return self._template_from_string(FLEX_ATTENTION_TEMPLATE).render(**options)
