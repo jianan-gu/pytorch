@@ -839,10 +839,6 @@ class TestFlexAttention(InductorTestCase):
             )
         else:
             compiled_out1.backward(backward_grad1)
-            compiled_out1.backward(backward_grad1)
-
-            compiled_out1.backward(backward_grad1)
-
             self._check_out_and_grad(
                 golden_out1,
                 ref_out1,
@@ -4130,7 +4126,7 @@ BlockMask(shape=(1,s1,s2048,s2048),ssparsity=46.88%,s
                 lengths[index] += 1
             return lengths
 
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = torch.device("cuda" if TEST_ON_CUDA else "cpu")
         max_seq_len, doc_count = 128, 4
         B, H, SEQ_LEN, HEAD_DIM = 1, 1, max_seq_len, 8
 
