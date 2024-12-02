@@ -198,16 +198,16 @@ FLEX_ATTENTION_TEMPLATE = r"""
 
             {%- if score_mod and mask_mod %}
             // apply score mod function
-            for (int row = 0; row < cur_qSplitSize; ++row) {
-              for(int col = 0; col< cur_kvSplitSize; col++){
-                std::vector<int> b_idx = {i};
-                std::vector<int> h_idx = {j};
-                std::vector<int> q_idx = {m+row};
-                int phisical_kv_idx = n+col;
+            for (int64_t row = 0; row < cur_qSplitSize; ++row) {
+              for(int64_t col = 0; col< cur_kvSplitSize; col++){
+                std::vector<int64_t> b_idx = {i};
+                std::vector<int64_t> h_idx = {j};
+                std::vector<int64_t> q_idx = {m+row};
+                int64_t phisical_kv_idx = n+col;
                 if(use_kv_indice){
                     phisical_kv_idx= *kv_logical_data * kvBlockSize + col;
                 }
-                std::vector<int> kv_idx = {phisical_kv_idx};
+                std::vector<int64_t> kv_idx = {phisical_kv_idx};
                 accum_t* in_ptr0 = qk_data + row * cur_kvSplitSize + col;
                 auto in_ptr1 = b_idx.data();
                 auto in_ptr2 = h_idx.data();
@@ -219,24 +219,24 @@ FLEX_ATTENTION_TEMPLATE = r"""
                 }
             }
             // Apply block mask, fill unused with -inf
-            for (int row = 0; row < cur_qSplitSize; ++row) {
-              for(int col = 0; col< cur_kvSplitSize; col++){
-                std::vector<int> b_idx = {i};
-                std::vector<int> h_idx = {j};
-                std::vector<int> q_idx = {m+row};
-                int phisical_kv_idx = n+col;
+            for (int64_t row = 0; row < cur_qSplitSize; ++row) {
+              for(int64_t col = 0; col< cur_kvSplitSize; col++){
+                std::vector<int64_t> b_idx = {i};
+                std::vector<int64_t> h_idx = {j};
+                std::vector<int64_t> q_idx = {m+row};
+                int64_t phisical_kv_idx = n+col;
                 if(use_kv_indice){
                     phisical_kv_idx= *kv_logical_data * kvBlockSize + col;
                 }
-                std::vector<int> kv_idx = {phisical_kv_idx};
+                std::vector<int64_t> kv_idx = {phisical_kv_idx};
                 accum_t* qk_block = qk_data + row * cur_kvSplitSize + col;
                 auto in_ptr1 = b_idx.data();
                 auto in_ptr2 = h_idx.data();
                 auto in_ptr3 = q_idx.data();
                 auto in_ptr4 = kv_idx.data();
                 {{template.generate_other_buffer("mask_others", 5, -1, "len_mask_other", kernel.args)}}
-                std::vector<int> temp = {0};
-                int* out_ptr{{mask_buf_idx}} = temp.data();
+                std::vector<int64_t> temp = {0};
+                int64_t* out_ptr{{mask_buf_idx}} = temp.data();
                 {{template.modification(mask_mod, mask_buf_name, mask_buf_idx)}}
                 *qk_block = *out_ptr{{mask_buf_idx}}!=0 ?  *qk_block : -std::numeric_limits<accum_t>::infinity();
                 }
