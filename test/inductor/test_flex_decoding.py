@@ -639,9 +639,9 @@ class TestFlexDecoding(InductorTestCase):
         ref_out = golden_call(q_ref, k_ref, v_ref)
 
         if mask_mod is not None:
-            block_mask = create_block_mask(mask_mod, Q_B, 1, 1, S, device=device)
+            block_mask = create_block_mask(mask_mod, Q_B, 1, Q_S, KV_S, device=device)
         else:
-            block_mask = create_block_mask(noop_mask, Q_B, 1, 1, S, device=device)
+            block_mask = create_block_mask(noop_mask, Q_B, 1, Q_S, KV_S, device=device)
 
         compiled_out, _ = self.run_paged_attention(
             score_mod, q, k, v, dtype, block_mask, device=device
@@ -752,9 +752,7 @@ class TestFlexDecoding(InductorTestCase):
         score_mod: Callable,
         BLOCK_SIZE: Union[int, Tuple[int, int]],
     ):
-        block_mask = create_block_mask(
-            noop_mask, B, 1, S, S, BLOCK_SIZE=BLOCK_SIZE, device=device
-        )
+        block_mask = create_block_mask(noop_mask, B, 1, 1, S, BLOCK_SIZE=BLOCK_SIZE, device=device)
         self.run_test(score_mod, dtype, block_mask=block_mask, device=device)
 
     def input_strides_1(B, H, S, D):
@@ -1185,7 +1183,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         def scoremod_2(qk, b, h, q, kv):
             return torch.where(q >= kv, qk, -float("inf"))
 
-        block_mask = create_block_mask(noop_mask, 1, 1, 1, S, device=device)
+        block_mask = create_block_mask(noop_mask, 1, 1, 4, 1024, device=device)
 
         def f(q, k1, k2, v1, v2):
             q2 = flex_attention(q, k1, v1, score_mod=scoremod_1, block_mask=block_mask)
@@ -1267,7 +1265,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         def scoremod_2(qk, b, h, q, kv):
             return torch.where(q >= kv, qk, -float("inf"))
 
-        block_mask = create_block_mask(noop_mask, 1, 1, 1, S, device=device)
+        block_mask = create_block_mask(noop_mask, 1, 1, 4, 1024, device=device)
 
         attention1 = functools.partial(
             flex_attention, score_mod=scoremod_1, block_mask=block_mask
@@ -1783,8 +1781,8 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             mask_mod=mask_mod,
             B=2,
             H=None,
-            Q_LEN=128,
-            KV_LEN=256,
+            Q_LEN=2,
+            KV_LEN=2,
             device=device,
         )
 
