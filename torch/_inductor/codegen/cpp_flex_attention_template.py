@@ -27,7 +27,7 @@ FLEX_ATTENTION_TEMPLATE = r"""
 {%- set kernel_args = {"query": query, "key": key, "value": value,
                        "kv_num_blocks": kv_num_blocks, "kv_indices": kv_indices, "full_kv_num_blocks": full_kv_num_blocks} %}
 {%- set kernel_args = template.update_kernel_args(kernel_args) %}
-{{kernel.def_kernel(inputs=kernel_args, outputs={"output": output})}}
+{{kernel.def_kernel(inputs=kernel_args, outputs={"output": output}, extra_sizevars=template.extra_sizevars)}}
 {
   int64_t kvBlockSize = {{kvBlockSize}};
   kvBlockSize = kvBlockSize > {{kernel.size(key, 1)}} ? {{kernel.size(key, 1)}} : kvBlockSize;
@@ -373,6 +373,11 @@ class CppFlexAttentionTemplate(CppTemplate):
         self.len_score_other = len_score_other
         self.len_mask_other = len_mask_other
         self.kernel_input_name_to_buffer = kernel_input_name_to_buffer
+        self.extra_sizevars = {
+            val
+            for val in self.kernel_input_name_to_buffer.values()
+            if isinstance(val, sympy.Symbol)
+        }
         self.score_mod_other_buffers = (
             self.input_nodes[
                 5
@@ -467,6 +472,9 @@ class CppFlexAttentionTemplate(CppTemplate):
 
         for name, inp in kernel_output_args.items():
             args.output_buffers[name] = inp
+
+        for name in self.extra_sizevars:
+            args.sizevars[name] = f"k{name}"
 
         kernel_group.args = args
 
