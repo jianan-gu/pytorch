@@ -78,15 +78,15 @@ FLEX_ATTENTION_TEMPLATE = r"""
   int64_t oStrideH = {{kernel.stride(output, 1)}};
 
   // Check total kv block number for kv value.
-  int64_t total_kv_num_blocks = 0;
-  int64_t zero_kv_idx_num = 1;
-  for(int64_t kv_idx = 0; kv_idx <{{kernel.size(kv_indices, 3)}}; kv_idx++){
-    if(*(kv_indices + kv_idx) > 0){
-      total_kv_num_blocks++;
-    }else if(*(kv_indices + kv_idx) == 0){
-      if(zero_kv_idx_num == 1){
-        zero_kv_idx_num--;
-        total_kv_num_blocks++;
+  int64_t block_num_kv_count = 0;
+  bool has_block_indice_zero = true;
+  for(int64_t kv_count = 0; kv_count < block_num_kvi; kv_count++){
+    if(*(kv_indices + kv_count) > 0){
+      block_num_kv_count++;
+    }else if(*(kv_indices + kv_count) == 0){
+      if(has_block_indice_zero){
+        has_block_indice_zero = false;
+        block_num_kv_count++;
       }else{
         break;
       }
@@ -94,17 +94,16 @@ FLEX_ATTENTION_TEMPLATE = r"""
   }
   // Check to use kv_indice if total block size is bigger than kv length, e.g., in PagedAttention case.
   bool use_kv_indice = false;
-  if(block_num_kvi != total_kv_num_blocks &&  batchSize_k == 1 ){
+  if(block_num_kvi != block_num_kv_count &&  batchSize_k == 1 ){
     use_kv_indice=true;
   }
-  int64_t kvSize = use_kv_indice ? total_kv_num_blocks*kvBlockSize : {{kernel.size(key, 1)}};
+  int64_t kvSize = use_kv_indice ? block_num_kv_count*kvBlockSize : {{kernel.size(key, 1)}};
   int64_t qSplitSize = 32;
   int64_t kvSplitSize = 512;
   if(qSize >= 768){
     qSplitSize = 256;
     kvSplitSize = 512;
-  }
-  else if(qSize >= 192){
+  }else if(qSize >= 192){
     qSplitSize = 64;
     kvSplitSize = 512;
   }
