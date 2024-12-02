@@ -759,9 +759,15 @@ class TestFlexAttention(InductorTestCase):
         block_mask1 = create_block_mask(mask_mod, 1, 1, S, S, device=device)
         sdpa_partial1 = create_attention(score_mod, block_mask=block_mask1)
 
-        q1 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad)
-        k1 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad)
-        v1 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad)
+        q1 = torch.randn(
+            (B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad
+        )
+        k1 = torch.randn(
+            (B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad
+        )
+        v1 = torch.randn(
+            (B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad
+        )
         q1_ref, k1_ref, v1_ref = query_key_value_clones(q1, k1, v1)
         q1_gold, k1_gold, v1_gold = query_key_value_clones(q1, k1, v1, torch.float64)
         ref_out1 = sdpa_partial1(q1_ref, k1_ref, v1_ref)
@@ -777,9 +783,15 @@ class TestFlexAttention(InductorTestCase):
         block_mask2 = create_block_mask(mask_mod, 1, 1, S, S, device=device)
         sdpa_partial2 = create_attention(score_mod, block_mask=block_mask2)
 
-        q2 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad)
-        k2 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad)
-        v2 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad)
+        q2 = torch.randn(
+            (B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad
+        )
+        k2 = torch.randn(
+            (B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad
+        )
+        v2 = torch.randn(
+            (B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad
+        )
         q2_ref, k2_ref, v2_ref = query_key_value_clones(q2, k2, v2)
         q2_gold, k2_gold, v2_gold = query_key_value_clones(q2, k2, v2, torch.float64)
         ref_out2 = sdpa_partial2(q2_ref, k2_ref, v2_ref)
@@ -794,9 +806,15 @@ class TestFlexAttention(InductorTestCase):
         block_mask3 = create_block_mask(mask_mod, 1, 1, S, S, device=device)
         sdpa_partial3 = create_attention(score_mod, block_mask=block_mask3)
 
-        q3 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad)
-        k3 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad)
-        v3 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad)
+        q3 = torch.randn(
+            (B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad
+        )
+        k3 = torch.randn(
+            (B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad
+        )
+        v3 = torch.randn(
+            (B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad
+        )
         q3_ref, k3_ref, v3_ref = query_key_value_clones(q3, k3, v3)
         q3_gold, k3_gold, v3_gold = query_key_value_clones(q3, k3, v3, torch.float64)
         ref_out3 = sdpa_partial3(q3_ref, k3_ref, v3_ref)
@@ -914,9 +932,15 @@ class TestFlexAttention(InductorTestCase):
         block_mask1 = create_block_mask(noop_mask, 1, 1, S, S, device=device)
         sdpa_partial1 = create_attention(score_mod, block_mask=block_mask1)
         # The first eager batch, shape (B, H, S, D)
-        q1 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad)
-        k1 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad)
-        v1 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad)
+        q1 = torch.randn(
+            (B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad
+        )
+        k1 = torch.randn(
+            (B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad
+        )
+        v1 = torch.randn(
+            (B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad
+        )
         golden_out1 = sdpa_partial1(
             q1.to(torch.float64), k1.to(torch.float64), v1.to(torch.float64)
         )
@@ -927,9 +951,15 @@ class TestFlexAttention(InductorTestCase):
         S = int(S / 2)
         block_mask2 = create_block_mask(noop_mask, 1, 1, S, S, device=device)
         sdpa_partial2 = create_attention(score_mod, block_mask=block_mask2)
-        q2 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad)
-        k2 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad)
-        v2 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad)
+        q2 = torch.randn(
+            (B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad
+        )
+        k2 = torch.randn(
+            (B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad
+        )
+        v2 = torch.randn(
+            (B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad
+        )
         golden_out2 = sdpa_partial2(
             q2.to(torch.float64), k2.to(torch.float64), v2.to(torch.float64)
         )
@@ -940,9 +970,15 @@ class TestFlexAttention(InductorTestCase):
         S = int(S / 2)
         block_mask3 = create_block_mask(noop_mask, 1, 1, S, S, device=device)
         sdpa_partial3 = create_attention(score_mod, block_mask=block_mask3)
-        q3 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad)
-        k3 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad)
-        v3 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad)
+        q3 = torch.randn(
+            (B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad
+        )
+        k3 = torch.randn(
+            (B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad
+        )
+        v3 = torch.randn(
+            (B, H, S, D), dtype=dtype, device=device, requires_grad=is_requires_grad
+        )
         golden_out3 = sdpa_partial3(
             q3.to(torch.float64), k3.to(torch.float64), v3.to(torch.float64)
         )
