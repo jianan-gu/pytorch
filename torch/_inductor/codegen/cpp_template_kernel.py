@@ -56,7 +56,7 @@ class CppTemplateKernel(CppKernel):
         inputs: Dict[str, ir.Buffer],
         outputs: Dict[str, ir.Buffer],
         aliases: Optional[Dict[str, str]] = None,
-        extra_sizevars: Set[sympy.Symbol] = None,
+        extra_sizevars: Optional[Set[sympy.Symbol]] = None,
     ) -> str:
         for name, inp in inputs.items():
             if inp is not None:

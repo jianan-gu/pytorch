@@ -406,7 +406,8 @@ class CppFlexAttentionTemplate(CppTemplate):
     def set_extra_sizevars(self):
         extra_sizevars = set()
         extra_sizevars.update(
-            val for val in self.kernel_input_name_to_buffer.values()
+            val
+            for val in self.kernel_input_name_to_buffer.values()
             if isinstance(val, sympy.Symbol)
         )
         self.extra_sizevars = extra_sizevars
