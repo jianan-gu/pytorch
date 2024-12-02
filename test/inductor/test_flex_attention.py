@@ -106,11 +106,17 @@ TEST_ON_CUDA = (
     and torch.utils._triton.has_triton()
     and torch.cuda.get_device_capability() >= (8, 0)
 )
-test_devices = ["cpu", "cuda"] if TEST_ON_CUDA else ["cpu"]
-if TEST_ON_CUDA and not PLATFORM_SUPPORTS_BF16:
-    test_dtypes = [torch.float16, torch.float32]
+
+if TEST_ON_CUDA:
+    test_devices = ["cuda"]
+    test_dtypes = (
+        [torch.float32, torch.bfloat16, torch.float16]
+        if PLATFORM_SUPPORTS_BF16
+        else [torch.float16, torch.float32]
+    )
 else:
-    test_dtypes = [torch.float32, torch.bfloat16, torch.float16]
+    test_devices = ["cpu"]
+    test_dtypes = [torch.float32, torch.bfloat16]
 test_dtypes_fast = {"cuda": torch.float16, "cpu": torch.float32}
 
 
@@ -4090,6 +4096,7 @@ BlockMask(shape=(1,s1,s2048,s2048),ssparsity=46.88%,s
         torch.testing.assert_close(causal_mask_out, sdpa_mask_out, atol=5e-3, rtol=0.0)
 
     @supported_platform
+    @unittest.skipIf(not TEST_ON_CUDA, "Only test on cuda")
     def test_doc_mask_clamped_repro(self):
         def _offsets_to_doc_ids_tensor(offsets):
             device = offsets.device

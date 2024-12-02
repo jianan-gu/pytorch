@@ -42,9 +42,22 @@ TEST_ON_CUDA = (
     and torch.utils._triton.has_triton()
     and torch.cuda.get_device_capability() >= (8, 0)
 )
-test_devices = ["cpu", "cuda"] if TEST_ON_CUDA else ["cpu"]
 Tolerances = namedtuple("Tolerances", ["atol", "rtol"])
 torch.set_float32_matmul_precision("high")
+
+if TEST_ON_CUDA:
+    test_devices = ["cuda"]
+    test_dtypes = (
+        [torch.float32, torch.bfloat16, torch.float16]
+        if PLATFORM_SUPPORTS_BF16
+        else [torch.float16, torch.float32]
+    )
+else:
+    test_devices = ["cpu"]
+    test_dtypes = [torch.float32, torch.bfloat16]
+test_dtypes_fast = {"cuda": torch.float16, "cpu": torch.float32}
+
+test_page_sizes = [64, 128, 256]
 
 index = torch.ops.aten.index
 Tensor = torch.Tensor
@@ -64,21 +77,6 @@ def create_block_mask_test(score_mod, query, key):
         score_mod, 1, 1, query.shape[-2], key.shape[-2], query.device
     )
     return block_mask
-
-
-test_dtypes = (
-    [torch.float16, torch.bfloat16, torch.float32]
-    if PLATFORM_SUPPORTS_BF16
-    else [torch.float16, torch.float32]
-)
-
-if TEST_ON_CUDA and not PLATFORM_SUPPORTS_BF16:
-    test_dtypes = [torch.float16, torch.float32]
-else:
-    test_dtypes = [torch.float32, torch.bfloat16, torch.float16]
-test_dtypes_fast = {"cuda": torch.float16, "cpu": torch.float32}
-
-test_page_sizes = [64, 128, 256]
 
 
 # --------- Useful score mod functions for testing ---------
