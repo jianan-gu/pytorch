@@ -1123,8 +1123,14 @@ struct Brgemm : public KernelCache <BrgemmKey, GemmHelper> {
       return false;
     }
     if (dtype == ScalarType::Half) {
-      static bool fp16_support = dnnl::get_effective_cpu_isa() >= dnnl::cpu_isa::avx512_core_fp16;
+      static bool fp16_support = dnnl::get_effective_cpu_isa() >= dnnl::cpu_isa::avx512_core_amx_fp16;
       return fp16_support;
+    }else if (dtype == ScalarType::Float) {
+      static bool fp32_support = dnnl::get_effective_cpu_isa() >= dnnl::cpu_isa::avx2;
+      return fp32_support;
+    }else if (dtype == ScalarType::BFloat16) {
+      static bool bf16_support = dnnl::get_effective_cpu_isa() >= dnnl::cpu_isa::avx512_core_amx;
+      return bf16_support;
     }
     return false;
   }
@@ -1172,11 +1178,60 @@ struct Pack : public KernelCache <PackKey, pack_t> {
     if (dtype == ScalarType::Half) {
       static bool fp16_pack = dnnl::get_effective_cpu_isa() >= dnnl::cpu_isa::avx512_core_amx_fp16;
       return fp16_pack;
+    } else if (dtype == ScalarType::BFloat16) {
+      static bool bf16_pack = dnnl::get_effective_cpu_isa() >= dnnl::cpu_isa::avx512_core_amx;
+      return bf16_pack;
     }
+    return false;
     return false;
   }
 };
 #endif
+
+void brgemm(
+    int64_t M,
+    int64_t N,
+    int64_t K,
+    int64_t ld_a,
+    int64_t ld_b,
+    int64_t ld_c,
+    const bool add_C,
+    const float* A,
+    const float* B,
+    float* C) {
+#if defined(ONEDNN_UKERNEL_ENABLED)
+  if (Brgemm::device_check(ScalarType::Float)) {
+    Brgemm::call<float, float, float>(
+      M, N, K, ld_a, ld_b, ld_c, add_C, A, B, C);
+    return;
+  }
+#endif
+  // fallback path
+  std::cout<<"fallback"<<std::endl;
+  gemm(at::native::TransposeType::NoTranspose, at::native::TransposeType::NoTranspose, M, N, K, 1.0, A, ld_a, B, ld_b, 0.0, C, ld_c);
+}
+
+void brgemm(
+    int64_t M,
+    int64_t N,
+    int64_t K,
+    int64_t ld_a,
+    int64_t ld_b,
+    int64_t ld_c,
+    const bool add_C,
+    const at::BFloat16* A,
+    const at::BFloat16* B,
+    float* C) {
+#if defined(ONEDNN_UKERNEL_ENABLED)
+  if (Brgemm::device_check(ScalarType::BFloat16)) {
+    Brgemm::call<at::BFloat16, at::BFloat16, float>(
+      M, N, K, ld_a, ld_b, ld_c, add_C, A, B, C);
+    return;
+  }
+#endif
+std::cout<<"fallback"<<std::endl;
+  gemm(at::native::TransposeType::NoTranspose, at::native::TransposeType::NoTranspose, M, N, K, 1.0, A, ld_a, B, ld_b, 0.0, C, ld_c);
+}
 
 void brgemm(
     int64_t M,
@@ -1196,9 +1251,9 @@ void brgemm(
     return;
   }
 #endif
-  TORCH_CHECK(false,
-  "Half Brgemm is only supported on X64 when oneDNN ukernel is enabled and avx512_fp16 is supported");
+  gemm(at::native::TransposeType::NoTranspose, at::native::TransposeType::NoTranspose, M, N, K, 1.0, A, ld_a, B, ld_b, 0.0, C, ld_c);
 }
+
 
 void brgemm_release() {
 #if defined(ONEDNN_UKERNEL_ENABLED)
