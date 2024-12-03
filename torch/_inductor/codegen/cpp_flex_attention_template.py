@@ -20,61 +20,7 @@ from .cpp_template import CppTemplate
 
 log = logging.getLogger(__name__)
 
-FLEX_ATTENTION_TEMPLATE = r"""
-{{template.header().getvalue()}}
-#include <ATen/native/CPUBlas.h>
-#include <ATen/native/cpu/utils.h>
-template <typename scalar_t>
-inline void copy_value_with_pad(
-    const scalar_t* value_ptr,
-    scalar_t* dst_ptr,
-    int64_t rows,
-    int64_t cols,
-    int64_t prows,
-    int64_t pcols,
-    int64_t ldi) {
-  auto vec_size = at::vec::Vectorized<scalar_t>::size();
-  int64_t i = 0;
-  for (; i < rows; i++) {
-    int64_t j = 0;
-    for (; j < cols - (cols % vec_size); j += vec_size) {
-      auto vec_v =
-          at::vec::Vectorized<scalar_t>::loadu(value_ptr + i * ldi + j);
-      vec_v.store(dst_ptr + i * pcols + j);
-    }
-
-    if (j < cols) {
-      auto vec_v = at::vec::Vectorized<scalar_t>::loadu(
-          value_ptr + i * ldi + j, cols - j);
-      vec_v.store(dst_ptr + i * pcols + j, cols - j);
-    }
-
-    // col padding
-    auto psize = pcols - cols;
-    if (psize > 0) {
-      auto zero_vec = at::vec::Vectorized<scalar_t>(0);
-      int64_t pj = 0;
-      for (; pj < psize - (psize % vec_size); pj += vec_size) {
-        zero_vec.store(dst_ptr + i * pcols + cols + pj);
-      }
-      if (pj < psize) {
-        zero_vec.store(dst_ptr + i * pcols + cols + pj, psize - pj);
-      }
-    }
-  }
-  // row padding
-  for (; i < prows; i++) {
-    auto zero_vec = at::vec::Vectorized<scalar_t>(0);
-    int64_t j = 0;
-    for (; j < pcols - (pcols % vec_size); j += vec_size) {
-      zero_vec.store(dst_ptr + i * pcols + j);
-    }
-    if (j < pcols) {
-      zero_vec.store(dst_ptr + i * pcols + j, pcols - j);
-    }
-
-  }
-}
+SOFTMAX_FUSIONS = r"""
 // 1) out = exp(a - val)
 // 2) val = sum(out)
 template <typename T1, typename T2>
@@ -170,7 +116,60 @@ inline void fill_stub(scalar_t* data, scalar_t val, int64_t size) {
     data[d] = val;
   }
 }
+"""
 
+BRGEMM_PACK = r"""
+template <typename scalar_t>
+inline void copy_value_with_pad(
+    const scalar_t* value_ptr,
+    scalar_t* dst_ptr,
+    int64_t rows,
+    int64_t cols,
+    int64_t prows,
+    int64_t pcols,
+    int64_t ldi) {
+  auto vec_size = at::vec::Vectorized<scalar_t>::size();
+  int64_t i = 0;
+  for (; i < rows; i++) {
+    int64_t j = 0;
+    for (; j < cols - (cols % vec_size); j += vec_size) {
+      auto vec_v =
+          at::vec::Vectorized<scalar_t>::loadu(value_ptr + i * ldi + j);
+      vec_v.store(dst_ptr + i * pcols + j);
+    }
+
+    if (j < cols) {
+      auto vec_v = at::vec::Vectorized<scalar_t>::loadu(
+          value_ptr + i * ldi + j, cols - j);
+      vec_v.store(dst_ptr + i * pcols + j, cols - j);
+    }
+
+    // col padding
+    auto psize = pcols - cols;
+    if (psize > 0) {
+      auto zero_vec = at::vec::Vectorized<scalar_t>(0);
+      int64_t pj = 0;
+      for (; pj < psize - (psize % vec_size); pj += vec_size) {
+        zero_vec.store(dst_ptr + i * pcols + cols + pj);
+      }
+      if (pj < psize) {
+        zero_vec.store(dst_ptr + i * pcols + cols + pj, psize - pj);
+      }
+    }
+  }
+  // row padding
+  for (; i < prows; i++) {
+    auto zero_vec = at::vec::Vectorized<scalar_t>(0);
+    int64_t j = 0;
+    for (; j < pcols - (pcols % vec_size); j += vec_size) {
+      zero_vec.store(dst_ptr + i * pcols + j);
+    }
+    if (j < pcols) {
+      zero_vec.store(dst_ptr + i * pcols + j, pcols - j);
+    }
+
+  }
+}
 // Transpose a [2, 32] matrix to [32, 2]
 // Note: the output leading dimension should be 2,
 // that is, the output must be contiguous
@@ -268,7 +267,14 @@ static inline void pack_vnni2(
 TORCH_CHECK(false, "pack_vnni2 is only supported when avx512 is supported")
 #endif
 }
+"""
 
+FLEX_ATTENTION_TEMPLATE = r"""
+{{template.header().getvalue()}}
+#include <ATen/native/CPUBlas.h>
+#include <ATen/native/cpu/utils.h>
+{{template.codegen_softmax_fusion()}}
+{{template.codegen_brgemm_pack()}}
 {%- set kernel_args = {"query": query, "key": key, "value": value,
                        "kv_num_blocks": kv_num_blocks, "kv_indices": kv_indices, "full_kv_num_blocks": full_kv_num_blocks} %}
 {%- set kernel_args = template.update_kernel_args(kernel_args) %}
@@ -1056,3 +1062,8 @@ class CppFlexAttentionTemplate(CppTemplate):
                     patch.object(V.graph, "get_dtype", self._fake_get_dtype(buf))
                 )
             return self._template_from_string(FLEX_ATTENTION_TEMPLATE).render(**options)
+    def codegen_softmax_fusion(self):
+        return self._template_from_string(SOFTMAX_FUSIONS).render()
+    def codegen_brgemm_pack(self):
+        return self._template_from_string(BRGEMM_PACK).render()
+
