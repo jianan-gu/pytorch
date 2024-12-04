@@ -1206,11 +1206,12 @@ void brgemm(
   }
 #endif
   // fallback path
+  auto beta = add_C ? 1 : 0;
   gemm(
     at::native::TransposeType::NoTranspose,
     at::native::TransposeType::NoTranspose, 
-    M, N, K, 1,
-    A, ld_a, B, ld_b,
+    N, M, K, 1,
+    B, ld_b, A, ld_a,
     beta, C, ld_c);
 }
 
@@ -1233,11 +1234,12 @@ void brgemm(
   }
 #endif
   // fallback path
+  auto beta = add_C ? 1 : 0;
   gemm(
     at::native::TransposeType::NoTranspose,
     at::native::TransposeType::NoTranspose, 
-    M, N, K, 1,
-    A, ld_a, B, ld_b,
+    N, M, K, 1,
+    B, ld_b, A, ld_a,
     beta, C, ld_c);
 }
 

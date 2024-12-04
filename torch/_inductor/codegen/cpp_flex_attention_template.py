@@ -116,6 +116,25 @@ inline void fill_stub(scalar_t* data, scalar_t val, int64_t size) {
     data[d] = val;
   }
 }
+
+template <typename scalar_t>
+inline void _mul_scale_kernel(
+    scalar_t* a,
+    scalar_t scale,
+    int64_t size) {
+  auto vec_size = at::vec::Vectorized<scalar_t>::size();
+  auto vec_scale = at::vec::Vectorized<scalar_t>(scale);
+  for (int64_t i = 0; i < vec_size * (size / vec_size); i += vec_size) {
+    auto tmp0 = at::vec::Vectorized<scalar_t>::loadu(a + i);
+    auto tmp1 = tmp0 * vec_scale;
+    at::native::_store(a + i, tmp1);
+  }
+  for (int64_t i = vec_size * (size / vec_size); i < size; i++) {
+    auto tmp0 = a[i];
+    auto tmp1 = tmp0 * scale;
+    a[i] = tmp1;
+  }
+}
 """
 
 BRGEMM_PACK = r"""
@@ -602,12 +621,9 @@ FLEX_ATTENTION_TEMPLATE = r"""
                   j * eheadSize * kvSize + n * eheadSize,
               qk_data);
         }
-        // fix me!
-        for (int64_t row = 0; row < cur_qSplitSize; ++row) {
-          for (int col = 0; col< cur_kvSplitSize; col++) {
-            *(qk_data + row * cur_kvSplitSize + col) *= scaling_factor;
-          }
-        }
+
+        _mul_scale_kernel<accum_t>(qk_data, scaling_factor, cur_qSplitSize*cur_kvSplitSize);
+
 {%- if score_mod and mask_mod %}
         // apply score mod function
         for (int64_t row = 0; row < cur_qSplitSize; ++row) {
