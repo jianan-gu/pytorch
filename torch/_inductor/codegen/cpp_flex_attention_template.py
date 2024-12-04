@@ -184,7 +184,7 @@ static inline void transpose_pad_2x32_block(
   __m512i d0, d1;
   // load
   if (nrem < 32) {
-    __mmask32 mask_krem_v = (((long long)1) << nrem) - 1;
+    __mmask32 mask_krem_v = (1LL << nrem) - 1;
     r0 = _mm512_maskz_loadu_epi16(mask_krem_v, src);
     // if krem is not 2, pad with zeros
     if (krem == 2) {
@@ -210,13 +210,12 @@ static inline void transpose_pad_2x32_block(
 
   // store
   if (nrem < 16) {
-    __mmask32 mask_rem_v = (((long long)1) << (nrem * 2)) - 1;
+    __mmask32 mask_rem_v = (1LL << (nrem * 2)) - 1;
     _mm512_mask_storeu_epi16(dst, mask_rem_v, d0);
   } else if (nrem == 16) {
     _mm512_storeu_si512(reinterpret_cast<__m512i*>(dst), d0);
   } else if (nrem < 32) {
-    __mmask32 mask_rem_v = (((long long)1) << (nrem * 2 - 32)) - 1;
-    _mm512_mask_storeu_epi16(dst, mask_rem_v, d0);
+    __mmask32 mask_rem_v = (1LL << (nrem * 2 - 32)) - 1;
     _mm512_storeu_si512(reinterpret_cast<__m512i*>(dst), d0);
     _mm512_mask_storeu_epi16(
         reinterpret_cast<__m512i*>(dst + 32), mask_rem_v, d1);
@@ -372,7 +371,7 @@ FLEX_ATTENTION_TEMPLATE = r"""
   int64_t kvTail = (kvSize - 1) % kvSplitSize + 1;
 
   bool need_pack = false;
-  if(std::is_same_v<scalar_t, at::BFloat16>){
+  if (std::is_same_v<scalar_t, at::BFloat16>) {
     need_pack = at::native::cpublas::need_pack(at::kBFloat16);
   }
   // Pad is needed for packing when K is not even
@@ -410,116 +409,113 @@ FLEX_ATTENTION_TEMPLATE = r"""
 {%- set key_t_reorder_buf_name = "key_t_reorder" %}
   {{ kernel.define_buffer(key_t_reorder_buf_name,
      [ "batchSize", "num_head", "eheadSize", "kvSize" ], dtype = query_dtype) }}
-
+  key_reorder_ptr = key_t_reorder;
 {%- set value_t_reorder_buf_name = "value_t_reorder" %}
   {{ kernel.define_buffer(value_t_reorder_buf_name,
      [ "batchSize", "num_head", "kv_padding_size", "headSize_v"], dtype = query_dtype) }}
-
-  key_reorder_ptr = key_t_reorder;
   value_reorder_ptr = value_t_reorder;
 
   if (!headSize_even && need_pack) {
 {%- set qeury_t_padding_buf_name = "qeury_t_padding" %}
-  {{ kernel.define_buffer(qeury_t_padding_buf_name, [ "num_thread", "qSplitSize", "eheadSize"], dtype = query_dtype) }}
-  query_padding_ptr = qeury_t_padding;
+    {{ kernel.define_buffer(qeury_t_padding_buf_name, [ "num_thread", "qSplitSize", "eheadSize"], dtype = query_dtype) }}
+    query_padding_ptr = qeury_t_padding;
   }
   scalar_t* transpose_buffer_ptr = nullptr;
-  // Reorder K, V
-    if (need_pack) {
+
+  // Reorder K, V and transpose K
+  if (need_pack) {
 {%- set tranpose_t_reorder_buf_name = "tranpose_t_reorder" %}
     {{ kernel.define_buffer(tranpose_t_reorder_buf_name, [ "num_thread", "kvSplitSize", "headSize"], dtype = query_dtype) }}
     transpose_buffer_ptr = tranpose_t_reorder;
-    }
-    at::parallel_for(0, batchSize * num_head * kvSlice, 1, [&](int64_t begin, int64_t end) {
-        int ompIdx = at::get_thread_num();
-        int64_t i = 0, j = 0, l = 0, n = 0;
-        scalar_t* transpose_ptr = need_pack? transpose_buffer_ptr + ompIdx * kvSplitSize * headSize : nullptr;
-        at::native::data_index_init(begin, i, batchSize, j, num_head, l, kvSlice);
-        for ([[maybe_unused]] auto z : c10::irange(begin, end)) {
-          n = l * kvSplitSize;
-          int64_t cur_kvSplitSize = std::min(kvSplitSize, kvSize - n);
-          auto i_kv = is_broadcast_bs_kv ? i/bs_shards : i;
-          auto j_kv = is_broadcast_head_kv ? j/gqa_shards : j;
-          auto kv_block_num = n / cur_kvSplitSize;
-          auto kv_block_offset = n - kv_block_num * cur_kvSplitSize;
-          // getting kv indices by [BS, Head, 1, kv_block_num]
-          auto i_kvi = is_broadcast_bs_kvi ? i/bs_shards_kvi : i;
-          auto j_kvi = is_broadcast_head_kvi ? j/gqa_shards_kvi : j;
-          auto kv_logical_data = kv_indices_data + i_kvi * kviStrideB +
-                                  j_kvi * kviStrideH + kv_block_num;
+  }
+  at::parallel_for(0, batchSize * num_head * kvSlice, 1, [&](int64_t begin, int64_t end) {
+    int ompIdx = at::get_thread_num();
+    int64_t i = 0, j = 0, l = 0, n = 0;
+    scalar_t* transpose_ptr = need_pack? transpose_buffer_ptr + ompIdx * kvSplitSize * headSize : nullptr;
+    at::native::data_index_init(begin, i, batchSize, j, num_head, l, kvSlice);
+    for ([[maybe_unused]] auto z : c10::irange(begin, end)) {
+      n = l * kvSplitSize;
+      int64_t cur_kvSplitSize = std::min(kvSplitSize, kvSize - n);
+      auto i_kv = is_broadcast_bs_kv ? i/bs_shards : i;
+      auto j_kv = is_broadcast_head_kv ? j/gqa_shards : j;
+      auto kv_block_num = n / cur_kvSplitSize;
+      auto kv_block_offset = n - kv_block_num * cur_kvSplitSize;
+      // getting kv indices by [BS, Head, 1, kv_block_num]
+      auto i_kvi = is_broadcast_bs_kvi ? i/bs_shards_kvi : i;
+      auto j_kvi = is_broadcast_head_kvi ? j/gqa_shards_kvi : j;
+      auto kv_logical_data = kv_indices_data + i_kvi * kviStrideB +
+                              j_kvi * kviStrideH + kv_block_num;
+      auto k_addr =
+            k_data + i_kv * kStrideB + j_kv * kStrideH + n * kStrideN;
+      auto v_addr =
+            v_data + i_kv * vStrideB + j_kv * vStrideH + n * vStrideN;
+      if (use_kv_indice) {
+          k_addr =
+              k_data + i_kv * kStrideB + j_kv * kStrideH +
+              (*kv_logical_data * cur_kvSplitSize + kv_block_offset) * kStrideN;
+          v_addr =
+              v_data + i_kv * vStrideB + j_kv * vStrideH +
+              (*kv_logical_data * cur_kvSplitSize + kv_block_offset) * vStrideN;
+      }
+      if (need_pack) {
+        // transpose [cur_kvSplitSize, headSize] -> [headSize, cur_kvSplitSize]
+        at::native::utils::transpose<uint16_t>(
+          cur_kvSplitSize,
+          headSize,
+          /* src_ptr */
+          reinterpret_cast<const uint16_t*>(k_addr),
+          /* ld_src */ kStrideN,
+          /* dst */ reinterpret_cast<uint16_t*>(transpose_ptr),
+          /* ld_dst */ cur_kvSplitSize);
 
-          auto k_addr =
-              k_data + i_kv * kStrideB + j_kv * kStrideH + n * kStrideN;
-          auto v_addr =
-              v_data + i_kv * vStrideB + j_kv * vStrideH + n * vStrideN;
-          if (use_kv_indice) {
-              k_addr =
-                  k_data + i_kv * kStrideB + j_kv * kStrideH +
-                  (*kv_logical_data * cur_kvSplitSize + kv_block_offset) * kStrideN;
-              v_addr =
-                  v_data + i_kv * vStrideB + j_kv * vStrideH +
-                  (*kv_logical_data * cur_kvSplitSize + kv_block_offset) * vStrideN;
-          }
+        // Pack [headSize, cur_kvSplitSize]
+        pack_vnni2(
+          /* src */ reinterpret_cast<const uint16_t*>(transpose_ptr),
+          /* dst */ reinterpret_cast<uint16_t*>(key_reorder_ptr + i * num_head * eheadSize * kvSize +
+                  j * eheadSize * kvSize + n * eheadSize),
+          /* ld_src */ cur_kvSplitSize,
+          /* K */ headSize,
+          /* N */ cur_kvSplitSize);
 
-          if (need_pack) {
+        // Pack [cur_kvSplitSize, headSize_v]
+        pack_vnni2(
+          /* src */ reinterpret_cast<const uint16_t*>(v_addr),
+          /* dst */ reinterpret_cast<uint16_t*>(value_reorder_ptr +
+                  i * num_head * kv_padding_size * headSize_v +
+                  j * kv_padding_size * headSize_v + n * headSize_v),
+          /* ld_src */ vStrideN,
+          /* K */ cur_kvSplitSize,
+          /* N */ headSize_v);
+        } else {
+          if (std::is_same_v<scalar_t, at::BFloat16>) {
             // transpose [cur_kvSplitSize, headSize] -> [headSize, cur_kvSplitSize]
             at::native::utils::transpose<uint16_t>(
-                cur_kvSplitSize,
-                headSize,
-                /* src_ptr */
-                reinterpret_cast<const uint16_t*>(k_addr),
-                /* ld_src */ kStrideN,
-                /* dst */ reinterpret_cast<uint16_t*>(transpose_ptr),
-                /* ld_dst */ cur_kvSplitSize);
-
-            // Pack [headSize, cur_kvSplitSize]
-            pack_vnni2(
-                /* src */ reinterpret_cast<const uint16_t*>(transpose_ptr),
-                /* dst */ reinterpret_cast<uint16_t*>(key_reorder_ptr + i * num_head * eheadSize * kvSize +
-                        j * eheadSize * kvSize + n * eheadSize),
-                /* ld_src */ cur_kvSplitSize,
-                /* K */ headSize,
-                /* N */ cur_kvSplitSize);
-
-            // Pack [cur_kvSplitSize, headSize_v]
-            pack_vnni2(
-                /* src */ reinterpret_cast<const uint16_t*>(v_addr),
-                /* dst */ reinterpret_cast<uint16_t*>(value_reorder_ptr +
-                        i * num_head * kv_padding_size * headSize_v +
-                        j * kv_padding_size * headSize_v + n * headSize_v),
-                /* ld_src */ vStrideN,
-                /* K */ cur_kvSplitSize,
-                /* N */ headSize_v);
-          }else{
-            if(std::is_same_v<scalar_t, at::BFloat16>){
-                // transpose [cur_kvSplitSize, headSize] -> [headSize, cur_kvSplitSize]
-                at::native::utils::transpose<uint16_t>(
-                    cur_kvSplitSize,
-                    headSize,
-                    /* src_ptr */
-                    reinterpret_cast<const uint16_t*>(k_addr),
-                    /* ld_src */ kStrideN,
-                    /* dst */ reinterpret_cast<uint16_t*>(key_reorder_ptr + i * num_head * eheadSize * kvSize +
-                            j * eheadSize * kvSize + n * eheadSize),
-                    /* ld_dst */ cur_kvSplitSize);
-            }
-            else{
-                // transpose [cur_kvSplitSize, headSize] -> [headSize, cur_kvSplitSize]
-                at::native::utils::transpose<float>(
-                    cur_kvSplitSize,
-                    headSize,
-                    /* src_ptr */
-                    reinterpret_cast<const float*>(k_addr),
-                    /* ld_src */ kStrideN,
-                    /* dst */ reinterpret_cast<float*>(key_reorder_ptr + i * num_head * eheadSize * kvSize +
-                            j * eheadSize * kvSize + n * eheadSize),
-                    /* ld_dst */ cur_kvSplitSize);
-            }
+                  cur_kvSplitSize,
+                  headSize,
+                  /* src_ptr */
+                  reinterpret_cast<const uint16_t*>(k_addr),
+                  /* ld_src */ kStrideN,
+                  /* dst */ reinterpret_cast<uint16_t*>(key_reorder_ptr + i * num_head * eheadSize * kvSize +
+                          j * eheadSize * kvSize + n * eheadSize),
+                  /* ld_dst */ cur_kvSplitSize);
+          } else {
+            // transpose [cur_kvSplitSize, headSize] -> [headSize, cur_kvSplitSize]
+            at::native::utils::transpose<float>(
+                  cur_kvSplitSize,
+                  headSize,
+                  /* src_ptr */
+                  reinterpret_cast<const float*>(k_addr),
+                  /* ld_src */ kStrideN,
+                  /* dst */ reinterpret_cast<float*>(key_reorder_ptr + i * num_head * eheadSize * kvSize +
+                          j * eheadSize * kvSize + n * eheadSize),
+                  /* ld_dst */ cur_kvSplitSize);
           }
-        // Move to the next query
-        at::native::data_index_step(i, batchSize, j, num_head, l, kvSlice);
         }
-      });
+    // Move to the next query
+    at::native::data_index_step(i, batchSize, j, num_head, l, kvSlice);
+    }
+  });
+
   at::parallel_for(0, batchSize * num_head * qSlice, 1, [&](int64_t begin, int64_t end) {
     int64_t i = 0, j = 0, k = 0;
     at::native::data_index_init(begin, i, batchSize, j, num_head, k, qSlice);
@@ -546,7 +542,6 @@ FLEX_ATTENTION_TEMPLATE = r"""
           -std::numeric_limits<accum_t>::infinity(), cur_qSplitSize);
       fill_stub(qk_sum_data,
           static_cast<accum_t>(0), cur_qSplitSize);
-
       int64_t num_keys = kvSize;
       if (!headSize_even && need_pack) {
         // Pad query if headSize is not even
@@ -575,43 +570,43 @@ FLEX_ATTENTION_TEMPLATE = r"""
         auto j_kvi = is_broadcast_head_kvi ? j/gqa_shards_kvi : j;
         auto kv_logical_data = kv_indices_data + i_kvi * kviStrideB +
                                 j_kvi * kviStrideH + kv_block_num;
-        if(!need_pack){
-            auto k_addr =
-                key_reorder_ptr + i * num_head * eheadSize * kvSize + j * eheadSize * kvSize + n * eheadSize;
- 
-            at::native::cpublas::brgemm(
-                cur_qSplitSize,
-                cur_kvSplitSize,
-                eheadSize,
-                qStrideM,
-                cur_kvSplitSize,
-                cur_kvSplitSize,
-                false,
-                q_data + i * qStrideB + j * qStrideH +
-                    m * qStrideM,
-                k_addr,
-                qk_data);
-        }else{
-            at::native::cpublas::brgemm(
-                cur_qSplitSize,
-                cur_kvSplitSize,
-                eheadSize,
-                headSize_even ? qStrideM : eheadSize,
-                cur_kvSplitSize,
-                cur_kvSplitSize,
-                false,
-                !headSize_even
-                    ? query_t_padding_ptr
-                    : q_data + i * qStrideB + j * qStrideH + m * qStrideM,
-                key_reorder_ptr + i * num_head * eheadSize * kvSize +
-                    j * eheadSize * kvSize + n * eheadSize,
-                qk_data);
+        if (!need_pack) {
+          auto k_addr =
+              key_reorder_ptr + i * num_head * eheadSize * kvSize +
+              j * eheadSize * kvSize + n * eheadSize;
+          at::native::cpublas::brgemm(
+              cur_qSplitSize,
+              cur_kvSplitSize,
+              eheadSize,
+              qStrideM,
+              cur_kvSplitSize,
+              cur_kvSplitSize,
+              false,
+              q_data + i * qStrideB + j * qStrideH +
+                  m * qStrideM,
+              k_addr,
+              qk_data);
+        } else {
+          at::native::cpublas::brgemm(
+              cur_qSplitSize,
+              cur_kvSplitSize,
+              eheadSize,
+              headSize_even ? qStrideM : eheadSize,
+              cur_kvSplitSize,
+              cur_kvSplitSize,
+              false,
+              !headSize_even
+                  ? query_t_padding_ptr
+                  : q_data + i * qStrideB + j * qStrideH + m * qStrideM,
+              key_reorder_ptr + i * num_head * eheadSize * kvSize +
+                  j * eheadSize * kvSize + n * eheadSize,
+              qk_data);
         }
         // fix me!
         for (int64_t row = 0; row < cur_qSplitSize; ++row) {
-            for(int col = 0; col< cur_kvSplitSize; col++){
+          for (int col = 0; col< cur_kvSplitSize; col++) {
             *(qk_data + row * cur_kvSplitSize + col) *= scaling_factor;
-            }
+          }
         }
 {%- if score_mod and mask_mod %}
         // apply score mod function
@@ -621,7 +616,7 @@ FLEX_ATTENTION_TEMPLATE = r"""
             std::vector<int64_t> h_idx = {j};
             std::vector<int64_t> q_idx = {m+row};
             int64_t phisical_kv_idx = n+col;
-            if(use_kv_indice){
+            if (use_kv_indice) {
                 phisical_kv_idx= *kv_logical_data * kvBlockSize + col;
             }
             std::vector<int64_t> kv_idx = {phisical_kv_idx};
@@ -642,7 +637,7 @@ FLEX_ATTENTION_TEMPLATE = r"""
             std::vector<int64_t> h_idx = {j};
             std::vector<int64_t> q_idx = {m+row};
             int64_t phisical_kv_idx = n+col;
-            if(use_kv_indice){
+            if (use_kv_indice) {
                 phisical_kv_idx= *kv_logical_data * kvBlockSize + col;
             }
             std::vector<int64_t> kv_idx = {phisical_kv_idx};
@@ -704,40 +699,40 @@ FLEX_ATTENTION_TEMPLATE = r"""
           }
         }
         // Calculate Softmax(q @ k.T) @ v
-        if(!need_pack){
-            auto v_addr =
-                v_data + i_kv * vStrideB + j_kv * vStrideH + n * vStrideN;
-            if (use_kv_indice) {
-                v_addr =
-                    v_data + i_kv * vStrideB + j_kv * vStrideH +
-                    (*kv_logical_data * kvBlockSize + kv_block_offset) * vStrideN;
-            }
-            at::native::cpublas::brgemm(
-                    cur_qSplitSize,
-                    headSize_v,
-                    cur_ekvSplitSize,
-                    cur_ekvSplitSize,
-                    vStrideN,
-                    headSize_v,
-                    n > 0,
-                    conditional_data_ptr(qk_data, qk_reduced_data),
-                    v_addr,
-                    dst_data);
-        }else{
-            int64_t psize = n / kvSplitSize * ekvSplitSize;
-            at::native::cpublas::brgemm(
-                cur_qSplitSize,
-                headSize_v,
-                cur_ekvSplitSize,
-                cur_ekvSplitSize,
-                headSize_v,
-                headSize_v,
-                n > 0,
-                qk_reduced_data,
-                value_reorder_ptr +
-                    i * num_head * kv_padding_size * headSize_v +
-                    j * kv_padding_size * headSize_v + psize * headSize_v,
-                dst_data);
+        if (!need_pack) {
+          auto v_addr =
+              v_data + i_kv * vStrideB + j_kv * vStrideH + n * vStrideN;
+          if (use_kv_indice) {
+              v_addr =
+                  v_data + i_kv * vStrideB + j_kv * vStrideH +
+                  (*kv_logical_data * kvBlockSize + kv_block_offset) * vStrideN;
+          }
+          at::native::cpublas::brgemm(
+                  cur_qSplitSize,
+                  headSize_v,
+                  cur_ekvSplitSize,
+                  cur_ekvSplitSize,
+                  vStrideN,
+                  headSize_v,
+                  n > 0,
+                  conditional_data_ptr(qk_data, qk_reduced_data),
+                  v_addr,
+                  dst_data);
+        } else {
+          int64_t psize = n / kvSplitSize * ekvSplitSize;
+          at::native::cpublas::brgemm(
+              cur_qSplitSize,
+              headSize_v,
+              cur_ekvSplitSize,
+              cur_ekvSplitSize,
+              headSize_v,
+              headSize_v,
+              n > 0,
+              qk_reduced_data,
+              value_reorder_ptr +
+                  i * num_head * kv_padding_size * headSize_v +
+                  j * kv_padding_size * headSize_v + psize * headSize_v,
+              dst_data);
         }
       }
       // dst <- dst / sum[row]
@@ -1062,6 +1057,7 @@ class CppFlexAttentionTemplate(CppTemplate):
                 )
             return self._template_from_string(FLEX_ATTENTION_TEMPLATE).render(**options)
     def codegen_softmax_fusion(self):
+        # TODO: use inductor IR to rewrite
         return self._template_from_string(SOFTMAX_FUSIONS).render()
     def codegen_brgemm_pack(self):
         return self._template_from_string(BRGEMM_PACK).render()

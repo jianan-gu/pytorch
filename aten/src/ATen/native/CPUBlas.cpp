@@ -1123,7 +1123,7 @@ struct Brgemm : public KernelCache <BrgemmKey, GemmHelper> {
       return false;
     }
     if (dtype == ScalarType::Half) {
-      static bool fp16_support = dnnl::get_effective_cpu_isa() >= dnnl::cpu_isa::avx512_core_amx_fp16;
+      static bool fp16_support = dnnl::get_effective_cpu_isa() >= dnnl::cpu_isa::avx512_core_fp16;
       return fp16_support;
     }else if (dtype == ScalarType::Float) {
       static bool fp32_support = dnnl::get_effective_cpu_isa() >= dnnl::cpu_isa::avx2;
@@ -1206,8 +1206,12 @@ void brgemm(
   }
 #endif
   // fallback path
-  std::cout<<"fallback"<<std::endl;
-  gemm(at::native::TransposeType::NoTranspose, at::native::TransposeType::NoTranspose, M, N, K, 1.0, A, ld_a, B, ld_b, 0.0, C, ld_c);
+  gemm(
+    at::native::TransposeType::NoTranspose,
+    at::native::TransposeType::NoTranspose, 
+    M, N, K, 1,
+    A, ld_a, B, ld_b,
+    beta, C, ld_c);
 }
 
 void brgemm(
@@ -1228,8 +1232,13 @@ void brgemm(
     return;
   }
 #endif
-std::cout<<"fallback"<<std::endl;
-  gemm(at::native::TransposeType::NoTranspose, at::native::TransposeType::NoTranspose, M, N, K, 1.0, A, ld_a, B, ld_b, 0.0, C, ld_c);
+  // fallback path
+  gemm(
+    at::native::TransposeType::NoTranspose,
+    at::native::TransposeType::NoTranspose, 
+    M, N, K, 1,
+    A, ld_a, B, ld_b,
+    beta, C, ld_c);
 }
 
 void brgemm(
@@ -1250,7 +1259,8 @@ void brgemm(
     return;
   }
 #endif
-  gemm(at::native::TransposeType::NoTranspose, at::native::TransposeType::NoTranspose, M, N, K, 1.0, A, ld_a, B, ld_b, 0.0, C, ld_c);
+  TORCH_CHECK(false,
+  "Half Brgemm is only supported on X64 when oneDNN ukernel is enabled and avx512_fp16 is supported");
 }
 
 
