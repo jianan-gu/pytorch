@@ -423,7 +423,6 @@ FLEX_ATTENTION_TEMPLATE = r"""
   {{ kernel.define_buffer(qeury_t_padding_buf_name, [ "num_thread", "qSplitSize", "eheadSize"], dtype = query_dtype) }}
   query_padding_ptr = qeury_t_padding;
   }
-
   scalar_t* transpose_buffer_ptr = nullptr;
   // Reorder K, V
     if (need_pack) {
@@ -521,7 +520,6 @@ FLEX_ATTENTION_TEMPLATE = r"""
         at::native::data_index_step(i, batchSize, j, num_head, l, kvSlice);
         }
       });
-
   at::parallel_for(0, batchSize * num_head * qSlice, 1, [&](int64_t begin, int64_t end) {
     int64_t i = 0, j = 0, k = 0;
     at::native::data_index_init(begin, i, batchSize, j, num_head, k, qSlice);
@@ -562,7 +560,6 @@ FLEX_ATTENTION_TEMPLATE = r"""
           qStrideM
         );
       }
-
       for (int64_t n = 0; n < num_keys; n += kvSplitSize) {
         int64_t cur_kvSplitSize = std::min(kvSplitSize, kvSize - n);
         cur_kvSplitSize = cur_kvSplitSize == kvSplitSize ? kvSplitSize : kvTail;
@@ -581,7 +578,7 @@ FLEX_ATTENTION_TEMPLATE = r"""
         if(!need_pack){
             auto k_addr =
                 key_reorder_ptr + i * num_head * eheadSize * kvSize + j * eheadSize * kvSize + n * eheadSize;
-
+ 
             at::native::cpublas::brgemm(
                 cur_qSplitSize,
                 cur_kvSplitSize,
@@ -742,7 +739,6 @@ FLEX_ATTENTION_TEMPLATE = r"""
                     j * kv_padding_size * headSize_v + psize * headSize_v,
                 dst_data);
         }
-
       }
       // dst <- dst / sum[row]
       // reorder MHA output with strides
@@ -761,6 +757,9 @@ FLEX_ATTENTION_TEMPLATE = r"""
       }
       // Move to the next query
       at::native::data_index_step(i, batchSize, j, num_head, k, qSlice);
+    }
+    if (need_pack) {
+      at::native::cpublas::brgemm_release();
     }
   });
 }

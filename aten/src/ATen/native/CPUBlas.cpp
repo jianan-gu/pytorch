@@ -1183,7 +1183,6 @@ struct Pack : public KernelCache <PackKey, pack_t> {
       return bf16_pack;
     }
     return false;
-    return false;
   }
 };
 #endif
