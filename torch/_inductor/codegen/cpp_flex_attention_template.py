@@ -410,6 +410,7 @@ FLEX_ATTENTION_TEMPLATE = r"""
 {%- set key_t_reorder_buf_name = "key_t_reorder" %}
   {{ kernel.define_buffer(key_t_reorder_buf_name,
      [ "batchSize", "num_head", "eheadSize", "kvSize" ], dtype = query_dtype) }}
+
 {%- set value_t_reorder_buf_name = "value_t_reorder" %}
   {{ kernel.define_buffer(value_t_reorder_buf_name,
      [ "batchSize", "num_head", "kv_padding_size", "headSize_v"], dtype = query_dtype) }}
@@ -585,7 +586,7 @@ FLEX_ATTENTION_TEMPLATE = r"""
                 cur_qSplitSize,
                 cur_kvSplitSize,
                 eheadSize,
-                headSize_even ? qStrideM : eheadSize,
+                qStrideM,
                 cur_kvSplitSize,
                 cur_kvSplitSize,
                 false,
@@ -714,13 +715,12 @@ FLEX_ATTENTION_TEMPLATE = r"""
                     v_data + i_kv * vStrideB + j_kv * vStrideH +
                     (*kv_logical_data * kvBlockSize + kv_block_offset) * vStrideN;
             }
-
             at::native::cpublas::brgemm(
                     cur_qSplitSize,
                     headSize_v,
-                    cur_kvSplitSize,
-                    cur_kvSplitSize,
-                    headSize,
+                    cur_ekvSplitSize,
+                    cur_ekvSplitSize,
+                    vStrideN,
                     headSize_v,
                     n > 0,
                     conditional_data_ptr(qk_data, qk_reduced_data),
