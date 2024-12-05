@@ -27,6 +27,8 @@ FLEX_ATTENTION_TEMPLATE = r"""
 {%- set kernel_args = {"query": query, "key": key, "value": value,
                        "kv_num_blocks": kv_num_blocks, "kv_indices": kv_indices, "full_kv_num_blocks": full_kv_num_blocks} %}
 {%- set kernel_args = template.update_kernel_args(kernel_args) %}
+
+extern "C"
 {{kernel.def_kernel(inputs=kernel_args, outputs={"output": output}, extra_sizevars=template.extra_sizevars)}}
 {
   int64_t kvBlockSize = {{kvBlockSize}};
@@ -161,10 +163,9 @@ FLEX_ATTENTION_TEMPLATE = r"""
           -std::numeric_limits<accum_t>::infinity(), cur_qSplitSize);
       fill_stub(qk_sum_data,
           static_cast<accum_t>(0), cur_qSplitSize);
-      int64_t num_keys = kvSize;
-      for (int64_t n = 0; n < num_keys; n += kvSplitSize) {
+
+      for (int64_t n = 0; n < kvSize; n += kvSplitSize) {
         int64_t cur_kvSplitSize = std::min(kvSplitSize, kvSize - n);
-        cur_kvSplitSize = cur_kvSplitSize == kvSplitSize ? kvSplitSize : kvTail;
         // Calculate scale * q @ k.T
         auto i_kv = is_broadcast_bs_kv ? i/bs_shards : i;
         auto j_kv = is_broadcast_head_kv ? j/gqa_shards : j;

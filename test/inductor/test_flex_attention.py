@@ -108,7 +108,7 @@ TEST_ON_CUDA = (
 )
 
 if TEST_ON_CUDA:
-    test_devices = ["cuda"]
+    test_device = "cuda"
     test_dtypes = (
         [torch.float32, torch.bfloat16, torch.float16]
         if PLATFORM_SUPPORTS_BF16
@@ -116,8 +116,12 @@ if TEST_ON_CUDA:
     )
     test_dtypes_fast = [torch.float16]
 else:
-    test_devices = ["cpu"]
-    test_dtypes = [torch.float32, torch.bfloat16]
+    test_device = "cpu"
+    test_dtypes = (
+        [torch.float32, torch.bfloat16]
+        if torch.ops.mkldnn._is_mkldnn_bf16_supported()
+        else [torch.float32]
+    )
     test_dtypes_fast = [torch.float32]
 
 
@@ -297,6 +301,10 @@ def batch_reserve(paged_attention: PagedAttention, target_seq_len: Tensor):
 
 
 class TestFlexAttention(InductorTestCase):
+    def setUp(self):
+        super().setUp()
+        self.device = test_device
+
     def _check_equal(
         self,
         golden_out: torch.Tensor,
@@ -773,9 +781,24 @@ class TestFlexAttention(InductorTestCase):
         block_mask1 = create_block_mask(mask_mod, 1, 1, S, S, device=device)
         sdpa_partial1 = create_attention(score_mod, block_mask=block_mask1)
 
-        q1 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=not test_inference_only)
-        k1 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=not test_inference_only)
-        v1 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=not test_inference_only)
+        q1 = torch.randn(
+            (B, H, S, D),
+            dtype=dtype,
+            device=device,
+            requires_grad=not test_inference_only,
+        )
+        k1 = torch.randn(
+            (B, H, S, D),
+            dtype=dtype,
+            device=device,
+            requires_grad=not test_inference_only,
+        )
+        v1 = torch.randn(
+            (B, H, S, D),
+            dtype=dtype,
+            device=device,
+            requires_grad=not test_inference_only,
+        )
         q1_ref, k1_ref, v1_ref = query_key_value_clones(q1, k1, v1)
         q1_gold, k1_gold, v1_gold = query_key_value_clones(q1, k1, v1, torch.float64)
         ref_out1 = sdpa_partial1(q1_ref, k1_ref, v1_ref)
@@ -791,9 +814,24 @@ class TestFlexAttention(InductorTestCase):
         block_mask2 = create_block_mask(mask_mod, 1, 1, S, S, device=device)
         sdpa_partial2 = create_attention(score_mod, block_mask=block_mask2)
 
-        q2 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=not test_inference_only)
-        k2 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=not test_inference_only)
-        v2 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=not test_inference_only)
+        q2 = torch.randn(
+            (B, H, S, D),
+            dtype=dtype,
+            device=device,
+            requires_grad=not test_inference_only,
+        )
+        k2 = torch.randn(
+            (B, H, S, D),
+            dtype=dtype,
+            device=device,
+            requires_grad=not test_inference_only,
+        )
+        v2 = torch.randn(
+            (B, H, S, D),
+            dtype=dtype,
+            device=device,
+            requires_grad=not test_inference_only,
+        )
         q2_ref, k2_ref, v2_ref = query_key_value_clones(q2, k2, v2)
         q2_gold, k2_gold, v2_gold = query_key_value_clones(q2, k2, v2, torch.float64)
         ref_out2 = sdpa_partial2(q2_ref, k2_ref, v2_ref)
@@ -808,9 +846,24 @@ class TestFlexAttention(InductorTestCase):
         block_mask3 = create_block_mask(mask_mod, 1, 1, S, S, device=device)
         sdpa_partial3 = create_attention(score_mod, block_mask=block_mask3)
 
-        q3 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=not test_inference_only)
-        k3 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=not test_inference_only)
-        v3 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=not test_inference_only)
+        q3 = torch.randn(
+            (B, H, S, D),
+            dtype=dtype,
+            device=device,
+            requires_grad=not test_inference_only,
+        )
+        k3 = torch.randn(
+            (B, H, S, D),
+            dtype=dtype,
+            device=device,
+            requires_grad=not test_inference_only,
+        )
+        v3 = torch.randn(
+            (B, H, S, D),
+            dtype=dtype,
+            device=device,
+            requires_grad=not test_inference_only,
+        )
         q3_ref, k3_ref, v3_ref = query_key_value_clones(q3, k3, v3)
         q3_gold, k3_gold, v3_gold = query_key_value_clones(q3, k3, v3, torch.float64)
         ref_out3 = sdpa_partial3(q3_ref, k3_ref, v3_ref)
@@ -928,9 +981,24 @@ class TestFlexAttention(InductorTestCase):
         block_mask1 = create_block_mask(noop_mask, 1, 1, S, S, device=device)
         sdpa_partial1 = create_attention(score_mod, block_mask=block_mask1)
         # The first eager batch, shape (B, H, S, D)
-        q1 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=not test_inference_only)
-        k1 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=not test_inference_only)
-        v1 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=not test_inference_only)
+        q1 = torch.randn(
+            (B, H, S, D),
+            dtype=dtype,
+            device=device,
+            requires_grad=not test_inference_only,
+        )
+        k1 = torch.randn(
+            (B, H, S, D),
+            dtype=dtype,
+            device=device,
+            requires_grad=not test_inference_only,
+        )
+        v1 = torch.randn(
+            (B, H, S, D),
+            dtype=dtype,
+            device=device,
+            requires_grad=not test_inference_only,
+        )
         golden_out1 = sdpa_partial1(
             q1.to(torch.float64), k1.to(torch.float64), v1.to(torch.float64)
         )
@@ -941,9 +1009,24 @@ class TestFlexAttention(InductorTestCase):
         S = int(S / 2)
         block_mask2 = create_block_mask(noop_mask, 1, 1, S, S, device=device)
         sdpa_partial2 = create_attention(score_mod, block_mask=block_mask2)
-        q2 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=not test_inference_only)
-        k2 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=not test_inference_only)
-        v2 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=not test_inference_only)
+        q2 = torch.randn(
+            (B, H, S, D),
+            dtype=dtype,
+            device=device,
+            requires_grad=not test_inference_only,
+        )
+        k2 = torch.randn(
+            (B, H, S, D),
+            dtype=dtype,
+            device=device,
+            requires_grad=not test_inference_only,
+        )
+        v2 = torch.randn(
+            (B, H, S, D),
+            dtype=dtype,
+            device=device,
+            requires_grad=not test_inference_only,
+        )
         golden_out2 = sdpa_partial2(
             q2.to(torch.float64), k2.to(torch.float64), v2.to(torch.float64)
         )
@@ -954,9 +1037,24 @@ class TestFlexAttention(InductorTestCase):
         S = int(S / 2)
         block_mask3 = create_block_mask(noop_mask, 1, 1, S, S, device=device)
         sdpa_partial3 = create_attention(score_mod, block_mask=block_mask3)
-        q3 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=not test_inference_only)
-        k3 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=not test_inference_only)
-        v3 = torch.randn((B, H, S, D), dtype=dtype, device=device, requires_grad=not test_inference_only)
+        q3 = torch.randn(
+            (B, H, S, D),
+            dtype=dtype,
+            device=device,
+            requires_grad=not test_inference_only,
+        )
+        k3 = torch.randn(
+            (B, H, S, D),
+            dtype=dtype,
+            device=device,
+            requires_grad=not test_inference_only,
+        )
+        v3 = torch.randn(
+            (B, H, S, D),
+            dtype=dtype,
+            device=device,
+            requires_grad=not test_inference_only,
+        )
         golden_out3 = sdpa_partial3(
             q3.to(torch.float64), k3.to(torch.float64), v3.to(torch.float64)
         )
@@ -991,14 +1089,11 @@ class TestFlexAttention(InductorTestCase):
         self._check_equal(golden_out3, ref_out3, compiled_out3, fudge_factor)
         self.assertEqual(torch._dynamo.utils.counters["frames"]["ok"], 2)
 
-    @common_utils.parametrize("device", test_devices)
     @common_utils.parametrize("dtype", test_dtypes)
     @common_utils.parametrize("score_mod", test_score_mods)
-    def test_builtin_score_mods(
-        self, device: str, dtype: torch.dtype, score_mod: Callable
-    ):
-        self.run_test(score_mod, dtype, device=device)
-        self.run_test_with_paged_attention(score_mod, dtype, device=device)
+    def test_builtin_score_mods(self, dtype: torch.dtype, score_mod: Callable):
+        self.run_test(score_mod, dtype, device=self.device)
+        self.run_test_with_paged_attention(score_mod, dtype, device=self.device)
 
     @running_on_a100_only
     @common_utils.parametrize("dtype", test_dtypes_fast)
@@ -1032,27 +1127,24 @@ class TestFlexAttention(InductorTestCase):
         )
         self.run_test_with_call(attention, dtype, B, H, 64, D, B, H, 64, D)
 
-    @common_utils.parametrize("device", test_devices)
     @common_utils.parametrize("dtype", test_dtypes_fast)
     @common_utils.parametrize("score_mask_mod", test_score_mask_mod_map.items())
     def test_builtin_score_mods_dynamic(
-        self, device: str, dtype: torch.dtype, score_mask_mod: Tuple[Callable, Callable]
+        self, dtype: torch.dtype, score_mask_mod: Tuple[Callable, Callable]
     ):
-        self.run_dynamic_test(score_mask_mod, dtype, device=device)
+        self.run_dynamic_test(score_mask_mod, dtype, device=self.device)
 
-    @common_utils.parametrize("device", test_devices)
     @common_utils.parametrize("dtype", test_dtypes_fast)
     @common_utils.parametrize("score_mod", test_score_mods)
     def test_builtin_score_mods_automatic_dynamic(
-        self, device: str, dtype: torch.dtype, score_mod: Callable
+        self, dtype: torch.dtype, score_mod: Callable
     ):
-        self.run_automatic_dynamic_test(score_mod, dtype, device=device)
+        self.run_automatic_dynamic_test(score_mod, dtype, device=self.device)
 
-    @common_utils.parametrize("device", test_devices)
     @common_utils.parametrize("dtype", test_dtypes_fast)
     @common_utils.parametrize("score_mod", test_score_mods)
     def test_builtin_score_mods_different_seqlen(
-        self, device: str, dtype: torch.dtype, score_mod: Callable
+        self, dtype: torch.dtype, score_mod: Callable
     ):
         inputs = (
             score_mod,
@@ -1066,36 +1158,32 @@ class TestFlexAttention(InductorTestCase):
             S,
             D,
         )
-        self.run_test(*inputs, device=device)
-        self.run_test_with_paged_attention(*inputs, device=device)
+        self.run_test(*inputs, device=self.device)
+        self.run_test_with_paged_attention(*inputs, device=self.device)
 
-    @common_utils.parametrize("device", test_devices)
     @common_utils.parametrize("dtype", test_dtypes)
     @common_utils.parametrize("score_mod", test_score_mods)
     @common_utils.parametrize("BLOCK_SIZE", test_block_size)
     def test_builtin_score_mods_different_block_size(
         self,
-        device: str,
         dtype: torch.dtype,
         score_mod: Callable,
         BLOCK_SIZE: Union[int, Tuple[int, int]],
     ):
         block_mask = create_block_mask(
-            noop_mask, B, H, S, S, BLOCK_SIZE=BLOCK_SIZE, device=device
+            noop_mask, B, H, S, S, BLOCK_SIZE=BLOCK_SIZE, device=self.device
         )
-        self.run_test(score_mod, dtype, block_mask=block_mask, device=device)
+        self.run_test(score_mod, dtype, block_mask=block_mask, device=self.device)
         self.run_test_with_paged_attention(
-            score_mod, dtype, block_mask=block_mask, device=device
+            score_mod, dtype, block_mask=block_mask, device=self.device
         )
 
-    @common_utils.parametrize("device", test_devices)
     @common_utils.parametrize("dtype", test_dtypes_fast)
     @common_utils.parametrize("batch_dims", test_Bq_Bkv)
     @common_utils.parametrize("head_dims", test_Hq_Hkv)
     @common_utils.parametrize("score_mod", test_score_mods)
     def test_kv_batch_broadcast(
         self,
-        device: str,
         dtype: torch.dtype,
         batch_dims: Tuple[int, int],
         head_dims: Tuple[int, int],
@@ -1107,20 +1195,29 @@ class TestFlexAttention(InductorTestCase):
         Bq, Bkv = batch_dims
         assert Bq > 1 and Bkv == 1
 
-        block_mask = create_block_mask(noop_mask, Bq, 1, S, S, device=device)
+        block_mask = create_block_mask(noop_mask, Bq, 1, S, S, device=self.device)
 
         self.run_test(
-            score_mod, dtype, Bq, Hq, S, D, Bkv, Hkv, S, D, block_mask, device=device
+            score_mod,
+            dtype,
+            Bq,
+            Hq,
+            S,
+            D,
+            Bkv,
+            Hkv,
+            S,
+            D,
+            block_mask,
+            device=self.device,
         )
 
-    @common_utils.parametrize("device", test_devices)
     @common_utils.parametrize("dtype", test_dtypes_fast)
     @common_utils.parametrize("batch_dims", test_Bq_Bkv)
     @common_utils.parametrize("head_dims", test_Hq_Hkv)
     @common_utils.parametrize("score_mod", test_score_mods)
     def test_kv_batch_broadcast_causal_mask(
         self,
-        device: str,
         dtype: torch.dtype,
         batch_dims: Tuple[int, int],
         head_dims: Tuple[int, int],
@@ -1135,19 +1232,18 @@ class TestFlexAttention(InductorTestCase):
         def mask_mod(b, h, q, kv):
             return q >= kv
 
-        block_mask = create_block_mask(mask_mod, Bq, 1, S, S, device=device)
+        block_mask = create_block_mask(mask_mod, Bq, 1, S, S, device=self.device)
         attention = functools.partial(
             flex_attention, block_mask=block_mask, enable_gqa=(not Hq == Hkv)
         )
 
         self.run_test_with_call(
-            attention, dtype, Bq, Hq, S, D, Bkv, Hkv, S, D, device=device
+            attention, dtype, Bq, Hq, S, D, Bkv, Hkv, S, D, device=self.device
         )
 
-    @common_utils.parametrize("device", test_devices)
     @common_utils.parametrize("dtype", test_dtypes_fast)
     @common_utils.parametrize("score_mod", test_score_mods)
-    def test_GQA(self, device: str, dtype: torch.dtype, score_mod: Callable):
+    def test_GQA(self, dtype: torch.dtype, score_mod: Callable):
         inputs = (
             score_mod,
             dtype,
@@ -1160,8 +1256,8 @@ class TestFlexAttention(InductorTestCase):
             S,
             D,
         )
-        self.run_test(*inputs, device=device)
-        self.run_test_with_paged_attention(*inputs, device=device)
+        self.run_test(*inputs, device=self.device)
+        self.run_test_with_paged_attention(*inputs, device=self.device)
 
     test_strides = [
         ((H * S * D, S * D, D, 1), 997),  # offset
@@ -3424,6 +3520,23 @@ class GraphModule(torch.nn.Module):
         ):
             attention(query, key, value, return_lse=True)
 
+    @unittest.skipIf(TEST_ON_CUDA, "Testing CPU error message")
+    def test_validate_cpu_dtype_error_message(self):
+        make_tensor = functools.partial(
+            torch.randn,
+            (2, 2, 128, 16),
+            device="cpu",
+            dtype=torch.half,
+            requires_grad=False,
+        )
+        query, key, value = make_tensor(), make_tensor(), make_tensor()
+        attention = torch.compile(flex_attention)
+        with self.assertRaisesRegex(
+            ValueError,
+            r"`torch.float` and `torch.bfloat16` are supported in FlexAttention for CPU device. Found input tensors are `torch.float16`.",
+        ):
+            attention(query, key, value)
+
 
 class TestBlockMask(InductorTestCase):
     @supported_platform
@@ -3931,6 +4044,10 @@ BlockMask(shape=(1,s1,s2048,s2048),ssparsity=46.88%,s
 
 
 class TestPagedAttention(InductorTestCase):
+    def setUp(self):
+        super().setUp()
+        self.device = test_device
+
     def _check_equal(
         self,
         golden_out: torch.Tensor,
@@ -4228,12 +4345,9 @@ class TestPagedAttention(InductorTestCase):
         )
         self.assertEqual(k_cache, expected_cache)
 
-    @common_utils.parametrize("device", test_devices)
     @common_utils.parametrize("dtype", test_dtypes_fast)
     @common_utils.parametrize("score_mod", test_score_mods)
-    def test_paged_builtin_score_mods(
-        self, device: str, dtype: torch.dtype, score_mod: Callable
-    ):
+    def test_paged_builtin_score_mods(self, dtype: torch.dtype, score_mod: Callable):
         n_pages, page_size, max_batch_size, max_seq_len = 32, 128, 4, 512
         n_heads, head_dim = 4, 16
 
@@ -4241,14 +4355,14 @@ class TestPagedAttention(InductorTestCase):
             return q >= kv
 
         block_mask = create_block_mask(
-            causal_mask, max_batch_size, 1, max_seq_len, max_seq_len, device=device
+            causal_mask, max_batch_size, 1, max_seq_len, max_seq_len, device=self.device
         )
         q = torch.randn(
             max_batch_size,
             n_heads,
             max_seq_len,
             head_dim,
-            device=device,
+            device=self.device,
             dtype=dtype,
             requires_grad=False,
         )
@@ -4257,7 +4371,7 @@ class TestPagedAttention(InductorTestCase):
             n_heads,
             max_seq_len,
             head_dim,
-            device=device,
+            device=self.device,
             dtype=dtype,
             requires_grad=False,
         )
@@ -4266,7 +4380,7 @@ class TestPagedAttention(InductorTestCase):
             n_heads,
             max_seq_len,
             head_dim,
-            device=device,
+            device=self.device,
             dtype=dtype,
             requires_grad=False,
         )
@@ -4285,7 +4399,7 @@ class TestPagedAttention(InductorTestCase):
             n_heads,
             MAX_CACHED_SEQ_LEN,
             head_dim,
-            device=device,
+            device=self.device,
             dtype=dtype,
         )
         v_cache = torch.zeros(
@@ -4293,19 +4407,31 @@ class TestPagedAttention(InductorTestCase):
             n_heads,
             MAX_CACHED_SEQ_LEN,
             head_dim,
-            device=device,
+            device=self.device,
             dtype=dtype,
         )
 
-        paged_cache = PagedAttention(n_pages, page_size, max_batch_size, device=device)
-        batch_reserve(paged_cache, torch.tensor([100, 200, 50, 300], device=device))
-        batch_reserve(paged_cache, torch.tensor([100, 512, 300, 300], device=device))
-        batch_reserve(paged_cache, torch.tensor([512, 512, 300, 300], device=device))
-        batch_reserve(paged_cache, torch.tensor([512, 512, 512, 300], device=device))
-        batch_reserve(paged_cache, torch.tensor([512, 512, 512, 512], device=device))
+        paged_cache = PagedAttention(
+            n_pages, page_size, max_batch_size, device=self.device
+        )
+        batch_reserve(
+            paged_cache, torch.tensor([100, 200, 50, 300], device=self.device)
+        )
+        batch_reserve(
+            paged_cache, torch.tensor([100, 512, 300, 300], device=self.device)
+        )
+        batch_reserve(
+            paged_cache, torch.tensor([512, 512, 300, 300], device=self.device)
+        )
+        batch_reserve(
+            paged_cache, torch.tensor([512, 512, 512, 300], device=self.device)
+        )
+        batch_reserve(
+            paged_cache, torch.tensor([512, 512, 512, 512], device=self.device)
+        )
 
-        batch_idx = torch.arange(max_batch_size, device=device, dtype=torch.int32)
-        input_pos = torch.arange(max_seq_len, device=device, dtype=torch.int32)
+        batch_idx = torch.arange(max_batch_size, device=self.device, dtype=torch.int32)
+        input_pos = torch.arange(max_seq_len, device=self.device, dtype=torch.int32)
         paged_cache.assign(batch_idx, input_pos, k, v, k_cache, v_cache)
 
         new_block_mask = paged_cache.convert_logical_block_mask(block_mask)
