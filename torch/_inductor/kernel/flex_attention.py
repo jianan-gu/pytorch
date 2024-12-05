@@ -825,10 +825,17 @@ def lower_cpu(
         SPARSE_KV_BLOCK_SIZE,
         mask_graph,
     ) = block_mask
+
     if kernel_options["OUTPUT_LOGSUMEXP"]:
         raise NotImplementedError(
             "torch.compile on CPU only supports inference and `return_lse` is not supported yet."
         )
+    if query.layout.dtype not in [torch.float, torch.bfloat16]:
+        raise NotImplementedError(
+            "`torch.float` and `torch.bfloat16` are supported in FlexAttention for CPU device. "
+            f"Found input tensors are `{query.layout.dtype}`."
+        )
+
     fake_buffers: List[Buffer] = []  # noqa: F821
     placeholder_inps = [
         create_placeholder(name, dtype, query.get_device())

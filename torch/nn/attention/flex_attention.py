@@ -1132,17 +1132,6 @@ def _validate_device(query: Tensor, key: Tensor, value: Tensor):
             f"Found input tensors on {query.device.type} device."
         )
 
-    if query.device.type == "cpu" and (
-        query.dtype not in [torch.float, torch.bfloat16]
-    ):
-        """TODO: Current CPU device supports `torch.float` and `torch.bfloat16`,
-        Remove this check once more dtypes are added.
-        """
-        raise ValueError(
-            "`torch.float` and `torch.bfloat16` are supported in FlexAttention for CPU device. "
-            f"Found input tensors are `{query.dtype}`."
-        )
-
 
 def _validate_nestedness(query: Tensor, key: Tensor, value: Tensor):
     # Currently, inputs can only be all nested or no nested.
