@@ -296,6 +296,8 @@ FLEX_ATTENTION_TEMPLATE = r"""
 {%- set kernel_args = {"query": query, "key": key, "value": value,
                        "kv_num_blocks": kv_num_blocks, "kv_indices": kv_indices, "full_kv_num_blocks": full_kv_num_blocks} %}
 {%- set kernel_args = template.update_kernel_args(kernel_args) %}
+
+extern "C"
 {{kernel.def_kernel(inputs=kernel_args, outputs={"output": output}, extra_sizevars=template.extra_sizevars)}}
 {
   int64_t kvBlockSize = {{kvBlockSize}};
@@ -561,7 +563,7 @@ FLEX_ATTENTION_TEMPLATE = r"""
           -std::numeric_limits<accum_t>::infinity(), cur_qSplitSize);
       fill_stub(qk_sum_data,
           static_cast<accum_t>(0), cur_qSplitSize);
-      int64_t num_keys = kvSize;
+
       if (!headSize_even && need_pack) {
         // Pad query if headSize is not even
         copy_value_with_pad<scalar_t>(
@@ -574,9 +576,8 @@ FLEX_ATTENTION_TEMPLATE = r"""
           qStrideM
         );
       }
-      for (int64_t n = 0; n < num_keys; n += kvSplitSize) {
+      for (int64_t n = 0; n < kvSize; n += kvSplitSize) {
         int64_t cur_kvSplitSize = std::min(kvSplitSize, kvSize - n);
-        cur_kvSplitSize = cur_kvSplitSize == kvSplitSize ? kvSplitSize : kvTail;
         int64_t cur_ekvSplitSize = (need_pack && cur_kvSplitSize % 2 != 0) ? cur_kvSplitSize + 1 : cur_kvSplitSize;
 
         // Calculate scale * q @ k.T
@@ -641,7 +642,7 @@ FLEX_ATTENTION_TEMPLATE = r"""
             auto in_ptr2 = h_idx.data();
             auto in_ptr3 = q_idx.data();
             auto in_ptr4 = kv_idx.data();
-            {{ template.generate_other_buffer("score_others", 5, 0, "len_score_other", kernel.args) }}
+            {{ template.generate_other_buffer("score_others", 0, "len_score_other", kernel.args) }}
             accum_t* out_ptr{{score_buf_idx}} = in_ptr0;
             {{ template.modification(score_mod, score_buf_name, score_buf_idx) }}
           }
@@ -662,7 +663,7 @@ FLEX_ATTENTION_TEMPLATE = r"""
             auto in_ptr2 = h_idx.data();
             auto in_ptr3 = q_idx.data();
             auto in_ptr4 = kv_idx.data();
-            {{ template.generate_other_buffer("mask_others", 5, -1, "len_mask_other", kernel.args) }}
+            {{ template.generate_other_buffer("mask_others", -1, "len_mask_other", kernel.args) }}
             std::vector<int64_t> temp = {0};
             int64_t* out_ptr{{mask_buf_idx}} = temp.data();
             {{ template.modification(mask_mod, mask_buf_name, mask_buf_idx) }}
@@ -829,10 +830,11 @@ class CppFlexAttentionTemplate(CppTemplate):
             for val in self.kernel_input_name_to_buffer.values()
             if isinstance(val, sympy.Symbol)
         }
+        self.other_buf_start_idx = 5
         self.score_mod_other_buffers = (
             self.input_nodes[
-                5
-                + self.other_buffer_input_offset : 5
+                self.other_buf_start_idx
+                + self.other_buffer_input_offset : self.other_buf_start_idx
                 + self.other_buffer_input_offset
                 + self.len_score_other
             ]
@@ -841,7 +843,9 @@ class CppFlexAttentionTemplate(CppTemplate):
         )
         self.mask_mod_other_buffers = (
             self.input_nodes[
-                5 + self.other_buffer_input_offset + self.len_score_other :
+                self.other_buf_start_idx
+                + self.other_buffer_input_offset
+                + self.len_score_other :
             ]
             if self.has_other_buffer
             else None
@@ -858,9 +862,7 @@ class CppFlexAttentionTemplate(CppTemplate):
         )
         return kernel_args
 
-    def generate_other_buffer(
-        self, buf_list, start_ptr, start_offset, len_attr, kernel_args
-    ):
+    def generate_other_buffer(self, buf_list, start_offset, len_attr, kernel_args):
         kernel_input_name_to_buffer_name = {
             key: value if isinstance(value, sympy.Symbol) else value.get_name()
             for key, value in self.kernel_input_name_to_buffer.items()
@@ -882,7 +884,7 @@ class CppFlexAttentionTemplate(CppTemplate):
 
         length = getattr(self, len_attr)
         for i in range(length):
-            pointer = f"in_ptr{start_ptr + start_offset + i}"
+            pointer = f"in_ptr{self.other_buf_start_idx + start_offset + i}"
             buffer_key = f"{buf_list}_{i}"
             if pointer not in self.other_ptr_data:
                 self.other_ptr_data[pointer] = (
