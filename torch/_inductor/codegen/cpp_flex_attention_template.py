@@ -148,6 +148,7 @@ FLEX_ATTENTION_TEMPLATE = r"""
 {{template.header().getvalue()}}
 #include <ATen/native/cpu/utils.h>
 #include <ATen/native/CPUBlas.h>
+#include <ATen/Context.h>
 {{template.codegen_softmax_fusion(kernel.kernel_name)}}
 {%- set kernel_args = {"query": query, "key": key, "value": value,
                        "kv_num_blocks": kv_num_blocks, "kv_indices": kv_indices, "full_kv_num_blocks": full_kv_num_blocks} %}
