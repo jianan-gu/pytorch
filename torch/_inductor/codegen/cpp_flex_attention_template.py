@@ -19,10 +19,136 @@ from .cpp_template import CppTemplate
 
 
 log = logging.getLogger(__name__)
+SOFTMAX_FUSIONS = r"""
+// 1) out = exp(a - val)
+// 2) val = sum(out)
+template <typename T1, typename T2>
+inline void {{kernel_name}}_exp_reduce_sum_fusion_kernel(
+    T1* a,
+    const int& size,
+    T2* out,
+    T1& val) {
+  auto vec_size = at::vec::Vectorized<T1>::size();
+  auto vec_max = at::vec::Vectorized<T1>(val);
+  T1 tmp_sum = 0;
+  auto vec_tmp_sum = at::vec::Vectorized<T1>(tmp_sum);
+  for (long i = 0; i < vec_size * (size / vec_size); i += vec_size) {
+    auto tmp0 = at::vec::Vectorized<T1>::loadu(a + i);
+    auto tmp1 = tmp0 - vec_max;
+    auto tmp2 = tmp1.exp_u20();
+    vec_tmp_sum += tmp2;
+    at::native::_store(out + i, tmp2);
+  }
+  tmp_sum = at::vec::vec_reduce_all<T1>(
+      [](at::vec::Vectorized<T1>& x, at::vec::Vectorized<T1>& y) {
+        return x + y;
+      },
+      vec_tmp_sum);
+  for (long i = vec_size * (size / vec_size); i < size; i++) {
+    auto tmp0 = a[i];
+    auto tmp1 = tmp0 - val;
+    auto tmp2 = exp(tmp1);
+    tmp_sum += tmp2;
+    out[i] = tmp2;
+  }
+  val = tmp_sum;
+}
 
+// 1) out = a * scale
+// 2) max = max(out)
+template <typename scalar_t>
+inline void {{kernel_name}}_mul_reduce_max_fusion_kernel(
+    const scalar_t* a,
+    const scalar_t& scale,
+    const int& size,
+    scalar_t* out,
+    scalar_t& max) {
+  auto vec_size = at::vec::Vectorized<scalar_t>::size();
+  auto vec_scale = at::vec::Vectorized<scalar_t>(scale);
+  scalar_t tmp_max = -std::numeric_limits<scalar_t>::infinity();
+  auto vec_tmp_max = at::vec::Vectorized<scalar_t>(tmp_max);
+  for (long i = 0; i < vec_size * (size / vec_size); i += vec_size) {
+    auto tmp0 = at::vec::Vectorized<scalar_t>::loadu(a + i);
+    auto tmp1 = tmp0 * vec_scale;
+    vec_tmp_max = at::vec::maximum(vec_tmp_max, tmp1);
+    at::native::_store(out + i, tmp1);
+  }
+  for (long i = vec_size * (size / vec_size); i < size; i++) {
+    auto tmp0 = a[i];
+    auto tmp1 = tmp0 * scale;
+    tmp_max = std::max(tmp_max, tmp1);
+    out[i] = tmp1;
+  }
+  max = std::max(
+      tmp_max,
+      at::vec::vec_reduce_all<scalar_t>(
+          [](at::vec::Vectorized<scalar_t>& x, at::vec::Vectorized<scalar_t>& y) {
+            return at::vec::maximum(x, y);
+          },
+          vec_tmp_max));
+}
+
+template <typename scalar_t>
+static inline scalar_t* {{kernel_name}}_conditional_data_ptr(scalar_t* ptr, scalar_t* ptr2) {
+  TORCH_CHECK(ptr2 == nullptr);
+  return ptr;
+}
+
+template <typename scalar_t,
+          typename std::enable_if_t<std::is_reduced_floating_point_v<scalar_t>, int> = 0>
+static inline scalar_t* {{kernel_name}}_conditional_data_ptr(float* ptr, scalar_t* ptr2) {
+  return ptr2;
+}
+
+template <typename scalar_t>
+inline void {{kernel_name}}_fill_stub(scalar_t* data, scalar_t val, int64_t size) {
+  using Vec = at::vec::Vectorized<scalar_t>;
+  Vec data_vec = Vec(val);
+  int64_t d = 0;
+  for (; d < size - (size % Vec::size()); d += Vec::size()) {
+    data_vec.store(data + d);
+  }
+  #if !defined(_MSC_VER) && !defined(COMPILING_FOR_MIN_SIZE)
+  # pragma unroll
+  #endif
+  for (; d < size; d++) {
+    data[d] = val;
+  }
+}
+
+// out = a * scale
+template <typename scalar_t>
+inline void {{kernel_name}}_mul_scale_kernel(
+    scalar_t* a,
+    scalar_t scale,
+    int64_t size) {
+  auto vec_size = at::vec::Vectorized<scalar_t>::size();
+  auto vec_scale = at::vec::Vectorized<scalar_t>(scale);
+  for (int64_t i = 0; i < vec_size * (size / vec_size); i += vec_size) {
+    auto tmp0 = at::vec::Vectorized<scalar_t>::loadu(a + i);
+    auto tmp1 = tmp0 * vec_scale;
+    at::native::_store(a + i, tmp1);
+  }
+  for (int64_t i = vec_size * (size / vec_size); i < size; i++) {
+    auto tmp0 = a[i];
+    auto tmp1 = tmp0 * scale;
+    a[i] = tmp1;
+  }
+}
+
+"""
+ALLOCATE_BUFFER = r"""
+  int64_t {{buffer_name}}_dtype_itemsize = std::is_same_v<{{buffer_dtype}}, at::BFloat16> ? 2 : 4;
+  auto& {{buffer_name}}_allocator = *at::getCPUAllocator();
+  auto {{buffer_name}}_work_data = {{buffer_name}}_allocator.allocate({{buffer_size}}*{{buffer_name}}_dtype_itemsize);
+  void* {{buffer_name}}_data_ptr = {{buffer_name}}_work_data.get();
+  {{buffer_dtype}}* {{buffer_name}} = ({{buffer_dtype}}*){{buffer_name}}_data_ptr;
+"""
 FLEX_ATTENTION_TEMPLATE = r"""
 {{template.header().getvalue()}}
+#include <ATen/native/cpu/utils.h>
 #include <ATen/native/CPUBlas.h>
+{{template.codegen_softmax_fusion(kernel.kernel_name)}}
 {%- set kernel_args = {"query": query, "key": key, "value": value,
                        "kv_num_blocks": kv_num_blocks, "kv_indices": kv_indices, "full_kv_num_blocks": full_kv_num_blocks} %}
 {%- set kernel_args = template.update_kernel_args(kernel_args) %}
@@ -102,6 +228,8 @@ extern "C"
   }
   int64_t kvSize = use_kv_indice ? block_num_kv_count * kvBlockSize
                                  : {{kernel.size(key, 1)}};
+
+  // Split size heuristics tuned for q/k len
   int64_t qSplitSize = 32;
   int64_t kvSplitSize = 512;
   if (qSize >= 768) {
@@ -122,9 +250,23 @@ extern "C"
   int64_t kvTail = (kvSize - 1) % kvSplitSize + 1;
 
   bool need_pack = false;
+  // Whether pack is needed for BFloat16
   if (std::is_same_v<scalar_t, at::BFloat16>) {
+    // check platform ability
     need_pack = at::native::cpublas::need_pack(at::kBFloat16);
+
+    // When the number of gemm is greater than the number of pack,
+    // the pack overhead can be overlaped.
+    int64_t thresh_size = 64 ;
+    need_pack = kvSize >= thresh_size && qSize >= thresh_size;
+    if (need_pack) {
+      double pack_size = batchSize * num_head * kvSize * headSize;
+      double qs_per_thread = (batchSize * num_head * qSlice + num_thread - 1) / num_thread;
+      double gemm_size_per_thread = qs_per_thread * qSplitSize * kvSize * headSize;
+      need_pack = gemm_size_per_thread / pack_size >= 4;
+    }
   }
+
   // Pad is needed for packing when K is not even
   bool headSize_even = headSize % 2 == 0;
   int64_t eheadSize = need_pack && !headSize_even ? headSize + 1: headSize;
@@ -138,77 +280,68 @@ extern "C"
       /* qk_sum */ qSplitSize +
       /* dst    */ qSplitSize * headSize_v;
 
-{%- set acc_buf_name = "buf" %}
-  {{ kernel.define_buffer(acc_buf_name, [ "num_thread", "_size_per_thread" ], dtype = accumulate_dtype) }}
-{%- set acc_reduced_buf_name = "buf_reduced" %}
-  {{ kernel.define_buffer(acc_reduced_buf_name, [ "num_thread", "qSplitSize", "ekvSplitSize" ], dtype = query_dtype) }}
-
   const scalar_t* q_data = query;
   const scalar_t* k_data = key;
   const scalar_t* v_data = value;
 
   scalar_t* out_data = output;
-  accum_t* buf_data = buf;
-  scalar_t* buf_reduced_data = is_reduced_type ? buf_reduced : nullptr;
+  {{template.codegen_allocate_buffer("buf_data", "accum_t", "num_thread*_size_per_thread")}}
 
-  // Buffer to store padding query and packing key/value
+  {{template.codegen_allocate_buffer("buf_reduced_data", "scalar_t", "num_thread*qSplitSize*ekvSplitSize")}}
+  if (!is_reduced_type){
+    buf_reduced_data = nullptr;
+  }
+
+  // Buffer if need pack, to store padding query and packing key/value
   scalar_t* key_reorder_ptr = nullptr;
   scalar_t* value_reorder_ptr = nullptr;
   scalar_t* query_padding_ptr = nullptr;
   int64_t kv_padding_size = (kvSize - 1) / kvSplitSize * ekvSplitSize + ekvTail;
 
-{%- set key_t_reorder_buf_name = "key_t_reorder" %}
-  {{ kernel.define_buffer(key_t_reorder_buf_name,
-     [ "batchSize", "num_head", "eheadSize", "kvSize" ], dtype = query_dtype) }}
-  key_reorder_ptr = key_t_reorder;
-{%- set value_t_reorder_buf_name = "value_t_reorder" %}
-  {{ kernel.define_buffer(value_t_reorder_buf_name,
-     [ "batchSize", "num_head", "kv_padding_size", "headSize_v"], dtype = query_dtype) }}
-  value_reorder_ptr = value_t_reorder;
-
   if (!headSize_even && need_pack) {
-{%- set qeury_t_padding_buf_name = "qeury_t_padding" %}
-    {{ kernel.define_buffer(qeury_t_padding_buf_name, [ "num_thread", "qSplitSize", "eheadSize"], dtype = query_dtype) }}
-    query_padding_ptr = qeury_t_padding;
+    {{template.codegen_allocate_buffer("query_padding_alloc_ptr", "scalar_t", "num_thread*qSplitSize*eheadSize")}}
+    query_padding_ptr = query_padding_alloc_ptr;
   }
-  scalar_t* transpose_buffer_ptr = nullptr;
 
   // Reorder K, V and transpose K
   if (need_pack) {
-{%- set tranpose_t_reorder_buf_name = "tranpose_t_reorder" %}
-    {{ kernel.define_buffer(tranpose_t_reorder_buf_name, [ "num_thread", "kvSplitSize", "headSize"], dtype = query_dtype) }}
-    transpose_buffer_ptr = tranpose_t_reorder;
-  }
-  at::parallel_for(0, batchSize * num_head * kvSlice, 1, [&](int64_t begin, int64_t end) {
-    int ompIdx = at::get_thread_num();
-    int64_t i = 0, j = 0, l = 0, n = 0;
-    scalar_t* transpose_ptr = need_pack? transpose_buffer_ptr + ompIdx * kvSplitSize * headSize : nullptr;
-    at::native::data_index_init(begin, i, batchSize, j, num_head, l, kvSlice);
-    for ([[maybe_unused]] auto z : c10::irange(begin, end)) {
-      n = l * kvSplitSize;
-      int64_t cur_kvSplitSize = std::min(kvSplitSize, kvSize - n);
-      auto i_kv = is_broadcast_bs_kv ? i/bs_shards : i;
-      auto j_kv = is_broadcast_head_kv ? j/gqa_shards : j;
-      auto kv_block_num = n / cur_kvSplitSize;
-      auto kv_block_offset = n - kv_block_num * cur_kvSplitSize;
-      // getting kv indices by [BS, Head, 1, kv_block_num]
-      auto i_kvi = is_broadcast_bs_kvi ? i/bs_shards_kvi : i;
-      auto j_kvi = is_broadcast_head_kvi ? j/gqa_shards_kvi : j;
-      auto kv_logical_data = kv_indices_data + i_kvi * kviStrideB +
-                              j_kvi * kviStrideH + kv_block_num;
-      auto k_addr =
-            k_data + i_kv * kStrideB + j_kv * kStrideH + n * kStrideN;
-      auto v_addr =
-            v_data + i_kv * vStrideB + j_kv * vStrideH + n * vStrideN;
-      if (use_kv_indice) {
-          k_addr =
-              k_data + i_kv * kStrideB + j_kv * kStrideH +
-              (*kv_logical_data * cur_kvSplitSize + kv_block_offset) * kStrideN;
-          v_addr =
-              v_data + i_kv * vStrideB + j_kv * vStrideH +
-              (*kv_logical_data * cur_kvSplitSize + kv_block_offset) * vStrideN;
-      }
-      if (need_pack) {
+    {{template.codegen_allocate_buffer("key_reorder_alloc_ptr", "scalar_t", "batchSize*num_head*eheadSize*kvSize")}}
+    key_reorder_ptr = key_reorder_alloc_ptr;
+
+    {{template.codegen_allocate_buffer("value_reorder_alloc_ptr", "scalar_t", "batchSize*num_head*kv_padding_size*headSize_v")}}
+    value_reorder_ptr = value_reorder_alloc_ptr;
+
+    {{template.codegen_allocate_buffer("transpose_buffer_ptr", "scalar_t", "num_thread*kvSplitSize*headSize")}}
+
+    at::parallel_for(0, batchSize * num_head * kvSlice, 1, [&](int64_t begin, int64_t end) {
+      int ompIdx = at::get_thread_num();
+      int64_t i = 0, j = 0, l = 0, n = 0;
+      scalar_t* transpose_ptr = need_pack? transpose_buffer_ptr + ompIdx * kvSplitSize * headSize : nullptr;
+      at::native::data_index_init(begin, i, batchSize, j, num_head, l, kvSlice);
+      for ([[maybe_unused]] auto z : c10::irange(begin, end)) {
+        n = l * kvSplitSize;
+        int64_t cur_kvSplitSize = std::min(kvSplitSize, kvSize - n);
+        auto i_kv = is_broadcast_bs_kv ? i/bs_shards : i;
+        auto j_kv = is_broadcast_head_kv ? j/gqa_shards : j;
+        auto kv_block_num = n / cur_kvSplitSize;
+        auto kv_block_offset = n - kv_block_num * cur_kvSplitSize;
+        // getting kv indices by [BS, Head, 1, kv_block_num]
+        auto i_kvi = is_broadcast_bs_kvi ? i/bs_shards_kvi : i;
+        auto j_kvi = is_broadcast_head_kvi ? j/gqa_shards_kvi : j;
+        auto kv_logical_data = kv_indices_data + i_kvi * kviStrideB +
+                                j_kvi * kviStrideH + kv_block_num;
+        auto k_addr =
+              k_data + i_kv * kStrideB + j_kv * kStrideH + n * kStrideN;
+        auto v_addr =
+              v_data + i_kv * vStrideB + j_kv * vStrideH + n * vStrideN;
+        if (use_kv_indice) {
+            k_addr =
+                k_data + i_kv * kStrideB + j_kv * kStrideH +
+                (*kv_logical_data * cur_kvSplitSize + kv_block_offset) * kStrideN;
+            v_addr =
+                v_data + i_kv * vStrideB + j_kv * vStrideH +
+                (*kv_logical_data * cur_kvSplitSize + kv_block_offset) * vStrideN;
+        }
         // transpose [cur_kvSplitSize, headSize] -> [headSize, cur_kvSplitSize]
         at::native::utils::transpose<uint16_t>(
           cur_kvSplitSize,
@@ -237,36 +370,13 @@ extern "C"
           /* ld_src */ vStrideN,
           /* K */ cur_kvSplitSize,
           /* N */ headSize_v);
-        } else {
-          if (std::is_same_v<scalar_t, at::BFloat16>) {
-            // transpose [cur_kvSplitSize, headSize] -> [headSize, cur_kvSplitSize]
-            at::native::utils::transpose<uint16_t>(
-                  cur_kvSplitSize,
-                  headSize,
-                  /* src_ptr */
-                  reinterpret_cast<const uint16_t*>(k_addr),
-                  /* ld_src */ kStrideN,
-                  /* dst */ reinterpret_cast<uint16_t*>(key_reorder_ptr + i * num_head * eheadSize * kvSize +
-                          j * eheadSize * kvSize + n * eheadSize),
-                  /* ld_dst */ cur_kvSplitSize);
-          } else {
-            // transpose [cur_kvSplitSize, headSize] -> [headSize, cur_kvSplitSize]
-            at::native::utils::transpose<float>(
-                  cur_kvSplitSize,
-                  headSize,
-                  /* src_ptr */
-                  reinterpret_cast<const float*>(k_addr),
-                  /* ld_src */ kStrideN,
-                  /* dst */ reinterpret_cast<float*>(key_reorder_ptr + i * num_head * eheadSize * kvSize +
-                          j * eheadSize * kvSize + n * eheadSize),
-                  /* ld_dst */ cur_kvSplitSize);
-          }
-        }
-    // Move to the next query
-    at::native::data_index_step(i, batchSize, j, num_head, l, kvSlice);
-    }
-  });
+      // Move to the next query
+      at::native::data_index_step(i, batchSize, j, num_head, l, kvSlice);
+      }
+    });
+  }
 
+  // Attention loop below
   at::parallel_for(0, batchSize * num_head * qSlice, 1, [&](int64_t begin, int64_t end) {
     int64_t i = 0, j = 0, k = 0;
     at::native::data_index_init(begin, i, batchSize, j, num_head, k, qSlice);
@@ -289,9 +399,9 @@ extern "C"
       int64_t m = k * qSplitSize;
       int64_t cur_qSplitSize = std::min(qSplitSize, qSize - m);
       // Initialize max and sum
-      fill_stub(qk_max_data,
+      {{kernel.kernel_name}}_fill_stub(qk_max_data,
           -std::numeric_limits<accum_t>::infinity(), cur_qSplitSize);
-      fill_stub(qk_sum_data,
+      {{kernel.kernel_name}}_fill_stub(qk_sum_data,
           static_cast<accum_t>(0), cur_qSplitSize);
 
       if (!headSize_even && need_pack) {
@@ -322,8 +432,34 @@ extern "C"
                                 j_kvi * kviStrideH + kv_block_num;
         if (!need_pack) {
           auto k_addr =
-              key_reorder_ptr + i * num_head * eheadSize * kvSize +
-              j * eheadSize * kvSize + n * eheadSize;
+              k_data + i_kv * kStrideB + j_kv * kStrideH + n * kStrideN;
+          if (use_kv_indice) {
+              k_addr =
+                  k_data + i_kv * kStrideB + j_kv * kStrideH +
+                  (*kv_logical_data * kvBlockSize + kv_block_offset) * kStrideN;
+          }
+          {{template.codegen_allocate_buffer("key_transpose_ptr", "scalar_t", "eheadSize*cur_kvSplitSize")}}
+          if (std::is_same_v<scalar_t, at::BFloat16>) {
+            // transpose [cur_kvSplitSize, eheadSize] -> [eheadSize, cur_kvSplitSize]
+            at::native::utils::transpose<uint16_t>(
+                  cur_kvSplitSize,
+                  eheadSize,
+                  /* src_ptr */
+                  reinterpret_cast<const uint16_t*>(k_addr),
+                  /* ld_src */ kStrideN,
+                  /* dst */ reinterpret_cast<uint16_t*>(key_transpose_ptr + n * eheadSize),
+                  /* ld_dst */ cur_kvSplitSize);
+          } else {
+            // transpose [cur_kvSplitSize, headSize] -> [headSize, cur_kvSplitSize]
+            at::native::utils::transpose<float>(
+                  cur_kvSplitSize,
+                  eheadSize,
+                  /* src_ptr */
+                  reinterpret_cast<const float*>(k_addr),
+                  /* ld_src */ kStrideN,
+                  /* dst */ reinterpret_cast<float*>(key_transpose_ptr + n * eheadSize),
+                  /* ld_dst */ cur_kvSplitSize);
+          }
           at::native::cpublas::brgemm(
               cur_qSplitSize,
               cur_kvSplitSize,
@@ -334,8 +470,9 @@ extern "C"
               false,
               q_data + i * qStrideB + j * qStrideH +
                   m * qStrideM,
-              k_addr,
-              qk_data);
+              key_transpose_ptr,
+              qk_data,
+              need_pack);
         } else {
           at::native::cpublas::brgemm(
               cur_qSplitSize,
@@ -350,10 +487,11 @@ extern "C"
                   : q_data + i * qStrideB + j * qStrideH + m * qStrideM,
               key_reorder_ptr + i * num_head * eheadSize * kvSize +
                   j * eheadSize * kvSize + n * eheadSize,
-              qk_data);
+              qk_data,
+              need_pack);
         }
 
-        _mul_scale_kernel<accum_t>(qk_data, scaling_factor, cur_qSplitSize*cur_kvSplitSize);
+        {{kernel.kernel_name}}_mul_scale_kernel<accum_t>(qk_data, scaling_factor, cur_qSplitSize*cur_kvSplitSize);
 
 {%- if score_mod and mask_mod %}
         // apply score mod function
@@ -407,7 +545,7 @@ extern "C"
         accum_t tmp_max = 0, tmp_sum = 0, exp_tmp = 0;
         for (int64_t row = 0; row < cur_qSplitSize; ++row) {
           // apply scaling factor and max per row in fusion
-          _mul_reduce_max_fusion_kernel(
+          {{kernel.kernel_name}}_mul_reduce_max_fusion_kernel(
               qk_data + row * cur_kvSplitSize,
               static_cast<accum_t>(1),
               cur_kvSplitSize,
@@ -416,14 +554,15 @@ extern "C"
           tmp_max = qk_max_data[row] > tmp_max ? qk_max_data[row] : tmp_max;
           if (tmp_max == -std::numeric_limits<accum_t>::infinity()) {
             // to avoid `nan = exp2f(-inf - (-inf))`
-            fill_stub(conditional_data_ptr(qk_data, qk_reduced_data) + row * cur_ekvSplitSize,
+            {{kernel.kernel_name}}_fill_stub(
+              {{kernel.kernel_name}}_conditional_data_ptr(qk_data, qk_reduced_data) + row * cur_ekvSplitSize,
               static_cast<scalar_t>(0), cur_kvSplitSize);
           } else {
             tmp_sum = tmp_max;
             // qk <- exp(qk - max) and sum per row
-            _exp_reduce_sum_fusion_kernel(
+            {{kernel.kernel_name}}_exp_reduce_sum_fusion_kernel(
               qk_data + row * cur_kvSplitSize, cur_kvSplitSize,
-              conditional_data_ptr(qk_data, qk_reduced_data) + row * cur_ekvSplitSize,
+              {{kernel.kernel_name}}_conditional_data_ptr(qk_data, qk_reduced_data) + row * cur_ekvSplitSize,
               tmp_sum);
             // exp_tmp <- exp(max[row] - max)
             exp_tmp = std::exp(qk_max_data[row] - tmp_max);
@@ -462,9 +601,10 @@ extern "C"
                   vStrideN,
                   headSize_v,
                   n > 0,
-                  conditional_data_ptr(qk_data, qk_reduced_data),
+                  {{kernel.kernel_name}}_conditional_data_ptr(qk_data, qk_reduced_data),
                   v_addr,
-                  dst_data);
+                  dst_data,
+                  need_pack);
         } else {
           int64_t psize = n / kvSplitSize * ekvSplitSize;
           at::native::cpublas::brgemm(
@@ -479,7 +619,8 @@ extern "C"
               value_reorder_ptr +
                   i * num_head * kv_padding_size * headSize_v +
                   j * kv_padding_size * headSize_v + psize * headSize_v,
-              dst_data);
+              dst_data,
+              need_pack);
         }
       }
       // dst <- dst / sum[row]
@@ -804,3 +945,18 @@ class CppFlexAttentionTemplate(CppTemplate):
                     patch.object(V.graph, "get_dtype", self._fake_get_dtype(buf))
                 )
             return self._template_from_string(FLEX_ATTENTION_TEMPLATE).render(**options)
+
+    def codegen_softmax_fusion(self, kernel_name: str):
+        # TODO: use inductor IR to rewrite those fusions
+        return self._template_from_string(SOFTMAX_FUSIONS).render(
+            dict(kernel_name=kernel_name)
+        )
+
+    def codegen_allocate_buffer(self, buffer_name: str, buffer_dtype, buffer_size):
+        return self._template_from_string(ALLOCATE_BUFFER).render(
+            dict(
+                buffer_name=buffer_name,
+                buffer_dtype=buffer_dtype,
+                buffer_size=buffer_size,
+            )
+        )

@@ -203,7 +203,8 @@ TORCH_API void brgemm(
     const bool add_C,
     const at::Half* A,
     const at::Half* B,
-    float* C);
+    float* C,
+    bool is_vnni = true);
 
 TORCH_API void brgemm(
     int64_t M,
@@ -215,8 +216,8 @@ TORCH_API void brgemm(
     const bool add_C,
     const at::BFloat16* A,
     const at::BFloat16* B,
-    float* C);
-
+    float* C,
+    bool is_vnni = true);
 
 TORCH_API void brgemm(
     int64_t M,
@@ -228,7 +229,8 @@ TORCH_API void brgemm(
     const bool add_C,
     const float* A,
     const float* B,
-    float* C);
+    float* C,
+    bool is_vnni = false);
 
 // Release brgemm hardware context
 TORCH_API void brgemm_release();

@@ -18,8 +18,7 @@
 
 #include <ATen/NumericUtils.h>
 #include <ATen/core/PhiloxRNGEngine.h>
-
-#include <ATen/native/cpu/utils.h>
+#include <ATen/Context.h>
 #include <c10/util/Float8_e4m3fn.h>
 #include <c10/util/Float8_e5m2.h>
 #include <c10/util/BFloat16.h>
@@ -1094,119 +1093,4 @@ static inline void pack_vnni2(
 #else
 TORCH_CHECK(false, "pack_vnni2 is only supported when avx512 is supported")
 #endif
-}
-
-// 1) out = exp(a - val)
-// 2) val = sum(out)
-template <typename T1, typename T2>
-inline void _exp_reduce_sum_fusion_kernel(
-    T1* a,
-    const int& size,
-    T2* out,
-    T1& val) {
-  auto vec_size = at::vec::Vectorized<T1>::size();
-  auto vec_max = at::vec::Vectorized<T1>(val);
-  T1 tmp_sum = 0;
-  auto vec_tmp_sum = at::vec::Vectorized<T1>(tmp_sum);
-  for (long i = 0; i < vec_size * (size / vec_size); i += vec_size) {
-    auto tmp0 = at::vec::Vectorized<T1>::loadu(a + i);
-    auto tmp1 = tmp0 - vec_max;
-    auto tmp2 = tmp1.exp_u20();
-    vec_tmp_sum += tmp2;
-    at::native::_store(out + i, tmp2);
-  }
-  tmp_sum = at::vec::vec_reduce_all<T1>(
-      [](at::vec::Vectorized<T1>& x, at::vec::Vectorized<T1>& y) {
-        return x + y;
-      },
-      vec_tmp_sum);
-  for (long i = vec_size * (size / vec_size); i < size; i++) {
-    auto tmp0 = a[i];
-    auto tmp1 = tmp0 - val;
-    auto tmp2 = exp(tmp1);
-    tmp_sum += tmp2;
-    out[i] = tmp2;
-  }
-  val = tmp_sum;
-}
-
-// 1) out = a * scale
-// 2) max = max(out)
-template <typename scalar_t>
-inline void _mul_reduce_max_fusion_kernel(
-    const scalar_t* a,
-    const scalar_t& scale,
-    const int& size,
-    scalar_t* out,
-    scalar_t& max) {
-  auto vec_size = at::vec::Vectorized<scalar_t>::size();
-  auto vec_scale = at::vec::Vectorized<scalar_t>(scale);
-  scalar_t tmp_max = -std::numeric_limits<scalar_t>::infinity();
-  auto vec_tmp_max = at::vec::Vectorized<scalar_t>(tmp_max);
-  for (long i = 0; i < vec_size * (size / vec_size); i += vec_size) {
-    auto tmp0 = at::vec::Vectorized<scalar_t>::loadu(a + i);
-    auto tmp1 = tmp0 * vec_scale;
-    vec_tmp_max = at::vec::maximum(vec_tmp_max, tmp1);
-    at::native::_store(out + i, tmp1);
-  }
-  for (long i = vec_size * (size / vec_size); i < size; i++) {
-    auto tmp0 = a[i];
-    auto tmp1 = tmp0 * scale;
-    tmp_max = std::max(tmp_max, tmp1);
-    out[i] = tmp1;
-  }
-  max = std::max(
-      tmp_max,
-      at::vec::vec_reduce_all<scalar_t>(
-          [](at::vec::Vectorized<scalar_t>& x, at::vec::Vectorized<scalar_t>& y) {
-            return at::vec::maximum(x, y);
-          },
-          vec_tmp_max));
-}
-
-template <typename scalar_t>
-static inline scalar_t* conditional_data_ptr(scalar_t* ptr, scalar_t* ptr2) {
-  TORCH_CHECK(ptr2 == nullptr);
-  return ptr;
-}
-
-template <typename scalar_t,
-          typename std::enable_if_t<std::is_reduced_floating_point_v<scalar_t>, int> = 0>
-static inline scalar_t* conditional_data_ptr(float* ptr, scalar_t* ptr2) {
-  return ptr2;
-}
-
-template <typename scalar_t>
-inline void fill_stub(scalar_t* data, scalar_t val, int64_t size) {
-  using Vec = at::vec::Vectorized<scalar_t>;
-  Vec data_vec = Vec(val);
-  int64_t d = 0;
-  for (; d < size - (size % Vec::size()); d += Vec::size()) {
-    data_vec.store(data + d);
-  }
-  #if !defined(_MSC_VER) && !defined(COMPILING_FOR_MIN_SIZE)
-  # pragma unroll
-  #endif
-  for (; d < size; d++) {
-    data[d] = val;
-  }
-}
-
-template <typename scalar_t>
-inline void _mul_scale_kernel(
-    scalar_t* a,
-    scalar_t scale,
-    int64_t size) {
-  auto vec_size = at::vec::Vectorized<scalar_t>::size();
-  auto vec_scale = at::vec::Vectorized<scalar_t>(scale);
-  for (int64_t i = 0; i < vec_size * (size / vec_size); i += vec_size) {
-    auto tmp0 = at::vec::Vectorized<scalar_t>::loadu(a + i);
-    auto tmp1 = tmp0 * vec_scale;
-    at::native::_store(a + i, tmp1);
-  }
-  for (int64_t i = vec_size * (size / vec_size); i < size; i++) {
-    auto tmp0 = a[i];
-    auto tmp1 = tmp0 * scale;
-    a[i] = tmp1;
-  }
 }
