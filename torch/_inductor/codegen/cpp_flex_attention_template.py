@@ -375,7 +375,11 @@ extern "C"
       }
     });
   }
-
+  scalar_t* key_transpose_alloc_ptr = nullptr;
+  if (!need_pack) {
+     {{template.codegen_allocate_buffer("key_transpose_alloc_buff_ptr", "scalar_t", "num_thread*eheadSize*kvSize")}}
+     key_transpose_alloc_ptr = key_transpose_alloc_buff_ptr;
+  }
   // Attention loop below
   at::parallel_for(0, batchSize * num_head * qSlice, 1, [&](int64_t begin, int64_t end) {
     int64_t i = 0, j = 0, k = 0;
@@ -386,7 +390,9 @@ extern "C"
     accum_t* qk_max_data = qk_data + qSplitSize * kvSplitSize;
     accum_t* qk_sum_data = qk_max_data + qSplitSize;
     accum_t* dst_data = qk_sum_data + qSplitSize;
-
+    scalar_t* key_transpose_ptr = need_pack
+            ? nullptr
+            : key_transpose_alloc_ptr + ompIdx * eheadSize*kvSize;
     scalar_t *qk_reduced_data =
         is_reduced_type
             ? buf_reduced_data + ompIdx * qSplitSize * ekvSplitSize
@@ -438,28 +444,18 @@ extern "C"
                   k_data + i_kv * kStrideB + j_kv * kStrideH +
                   (*kv_logical_data * kvBlockSize + kv_block_offset) * kStrideN;
           }
-          {{template.codegen_allocate_buffer("key_transpose_ptr", "scalar_t", "eheadSize*cur_kvSplitSize")}}
-          if (std::is_same_v<scalar_t, at::BFloat16>) {
-            // transpose [cur_kvSplitSize, eheadSize] -> [eheadSize, cur_kvSplitSize]
-            at::native::utils::transpose<uint16_t>(
-                  cur_kvSplitSize,
-                  eheadSize,
-                  /* src_ptr */
-                  reinterpret_cast<const uint16_t*>(k_addr),
-                  /* ld_src */ kStrideN,
-                  /* dst */ reinterpret_cast<uint16_t*>(key_transpose_ptr + n * eheadSize),
-                  /* ld_dst */ cur_kvSplitSize);
-          } else {
-            // transpose [cur_kvSplitSize, headSize] -> [headSize, cur_kvSplitSize]
-            at::native::utils::transpose<float>(
-                  cur_kvSplitSize,
-                  eheadSize,
-                  /* src_ptr */
-                  reinterpret_cast<const float*>(k_addr),
-                  /* ld_src */ kStrideN,
-                  /* dst */ reinterpret_cast<float*>(key_transpose_ptr + n * eheadSize),
-                  /* ld_dst */ cur_kvSplitSize);
-          }
+
+          using trans_t =std::conditional_t<std::is_same_v<scalar_t, at::BFloat16>, uint16_t, float>;
+          // transpose [cur_kvSplitSize, eheadSize] -> [eheadSize, cur_kvSplitSize]
+          at::native::utils::transpose<trans_t>(
+                cur_kvSplitSize,
+                eheadSize,
+                /* src_ptr */
+                reinterpret_cast<const trans_t*>(k_addr),
+                /* ld_src */ kStrideN,
+                /* dst */ reinterpret_cast<trans_t*>(key_transpose_ptr + n * eheadSize),
+                /* ld_dst */ cur_kvSplitSize);
+          auto k_addr_t = key_transpose_ptr + n * eheadSize;
           at::native::cpublas::brgemm(
               cur_qSplitSize,
               cur_kvSplitSize,
@@ -470,7 +466,7 @@ extern "C"
               false,
               q_data + i * qStrideB + j * qStrideH +
                   m * qStrideM,
-              key_transpose_ptr,
+              k_addr_t,
               qk_data,
               need_pack);
         } else {
