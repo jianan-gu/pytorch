@@ -1282,7 +1282,6 @@ void brgemm(
     beta, C, ld_c);
 }
 
-
 void brgemm_release() {
 #if defined(ONEDNN_UKERNEL_ENABLED)
   dnnl::ukernel::brgemm::release_hw_context();
