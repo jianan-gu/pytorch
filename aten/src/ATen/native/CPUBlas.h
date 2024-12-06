@@ -193,6 +193,7 @@ void copy(int64_t n, const c10::complex<float> *x, int64_t incx, c10::complex<fl
 // A Base pointer to a tensor A.
 // B Base pointer to a tensor B.
 // C Pointer to a tensor C (accumulation buffer).
+// Note only batch size 1 is used currently
 TORCH_API void brgemm(
     int64_t M,
     int64_t N,
@@ -232,6 +233,18 @@ TORCH_API void brgemm(
     float* C,
     bool is_vnni = false);
 
+TORCH_API void brgemm(
+    int64_t M,
+    int64_t N,
+    int64_t K,
+    int64_t ld_a,
+    int64_t ld_b,
+    int64_t ld_c,
+    const bool add_C,
+    const at::BFloat16* A,
+    const at::BFloat16* B,
+    float* C);
+
 // Release brgemm hardware context
 TORCH_API void brgemm_release();
 
@@ -246,7 +259,7 @@ void pack(
     const void* in,
     void* out);
 
-// Whether pack is needed in the platform.
-TORCH_API bool need_pack(ScalarType dt_in);
+// Whether pack is supported in the platform.
+TORCH_API bool could_pack(ScalarType dt_in);
 
 } // namespace at::native::cpublas

@@ -1125,10 +1125,10 @@ struct Brgemm : public KernelCache <BrgemmKey, GemmHelper> {
     if (dtype == ScalarType::Half) {
       static bool fp16_support = dnnl::get_effective_cpu_isa() >= dnnl::cpu_isa::avx512_core_fp16;
       return fp16_support;
-    }else if (dtype == ScalarType::Float) {
+    } else if (dtype == ScalarType::Float) {
       static bool fp32_support = dnnl::get_effective_cpu_isa() >= dnnl::cpu_isa::avx2;
       return fp32_support;
-    }else if (dtype == ScalarType::BFloat16) {
+    } else if (dtype == ScalarType::BFloat16) {
       static bool bf16_support = dnnl::get_effective_cpu_isa() >= dnnl::cpu_isa::avx512_core;
       return bf16_support;
     }
@@ -1159,19 +1159,19 @@ struct Pack : public KernelCache <PackKey, pack_t> {
 #elif defined(ONEDNN_UKERNEL_2)
           K, N, dnnl::ukernel::pack_type::no_trans, ld_in, ld_out, get_dnnl_dtype(dt_in), get_dnnl_dtype(dt_out));
 #endif
-      if (need_pack(dt_in)) {
+      if (could_pack(dt_in)) {
         (*p).generate();
       }
       return std::move(p);
     });
-    if (need_pack(dt_in)) {
+    if (could_pack(dt_in)) {
       (*pack).execute(in, out);
     } else {
       TORCH_CHECK(false, "No need to pack");
     }
   }
 
-  static inline bool need_pack(ScalarType dtype) {
+  static inline bool could_pack(ScalarType dtype) {
     if (!at::globalContext().userEnabledMkldnn()) {
       return false;
     }
@@ -1306,9 +1306,9 @@ void pack(
 #endif
 }
 
-bool need_pack(ScalarType dt_in) {
+bool could_pack(ScalarType dt_in) {
 #if defined(ONEDNN_UKERNEL_ENABLED)
-  return Pack::need_pack(dt_in);
+  return Pack::could_pack(dt_in);
 #else
   return false;
 #endif
