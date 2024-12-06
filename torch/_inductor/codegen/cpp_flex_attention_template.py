@@ -253,7 +253,7 @@ extern "C"
   // Whether pack is needed for BFloat16
   if (std::is_same_v<scalar_t, at::BFloat16>) {
     // check platform ability
-    need_pack = at::native::cpublas::need_pack(at::kBFloat16);
+    need_pack = at::native::cpublas::could_pack(at::kBFloat16);
 
     // When the number of gemm is greater than the number of pack,
     // the pack overhead can be overlaped.
