@@ -1863,7 +1863,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             converted_block_mask1,
             converted_score_mod1,
         ) = self.preprocess_paged_attention(
-            scoremod_1, query, keys[0], values[0], block_mask, torch.float32
+            scoremod_1, query, keys[0], values[0], block_mask, torch.float32, device=device
         )
         (
             k_cache2,
@@ -1871,7 +1871,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             converted_block_mask2,
             converted_score_mod2,
         ) = self.preprocess_paged_attention(
-            scoremod_2, query, keys[1], values[1], block_mask, torch.float32
+            scoremod_2, query, keys[1], values[1], block_mask, torch.float32, device=device
         )
 
         def paged_f(q, k1, k2, v1, v2):
@@ -1932,7 +1932,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             converted_block_mask1,
             converted_score_mod1,
         ) = self.preprocess_paged_attention(
-            scoremod_1, query, keys[0], values[0], block_mask, torch.float32
+            scoremod_1, query, keys[0], values[0], block_mask, torch.float32, device=device
         )
         (
             k_cache2,
@@ -1940,7 +1940,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             converted_block_mask2,
             converted_score_mod2,
         ) = self.preprocess_paged_attention(
-            scoremod_2, query, keys[1], values[1], block_mask, torch.float32
+            scoremod_2, query, keys[1], values[1], block_mask, torch.float32, device=device
         )
         (
             k_cache3,
@@ -1948,7 +1948,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             converted_block_mask3,
             converted_score_mod3,
         ) = self.preprocess_paged_attention(
-            scoremod_1, query, keys[2], values[2], block_mask, torch.float32
+            scoremod_1, query, keys[2], values[2], block_mask, torch.float32, device=device
         )
 
         paged_attention1 = functools.partial(
@@ -2037,7 +2037,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
         )
         self.assertExpectedInline(block_mask.kv_num_blocks.sum().item(), """28""")
         attention = functools.partial(flex_attention, block_mask=block_mask)
-        self.run_test_with_call(attention)
+        self.run_test_with_call(attention, device=device)
 
         block_mask = create_block_mask(
             and_masks(causal_mask, neg_causal_mask), 1, 1, S, S, device=device
@@ -2657,7 +2657,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             func = torch.compile(flex_attention, backend=mode, fullgraph=True)
             out = func(query, key, value)
         elif mode == "paged_attention":
-            out, _ = self.run_paged_attention(_identity, query, key, value, dtype)
+            out, _ = self.run_paged_attention(_identity, query, key, value, dtype, device=device)
         else:
             func = flex_attention
             out = func(query, key, value)
@@ -2835,6 +2835,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             lambda q, k, v: flex_attention(q, k, v, block_mask=block_mask),
             Q_S=1023,
             KV_S=1023,
+            device=device
         )
 
     @supported_platform
@@ -4175,7 +4176,7 @@ BlockMask(shape=(1,s1,s2048,s2048),ssparsity=46.88%,s
                 64,
                 device=device,
                 dtype=dtype,
-                requires_grad=True,
+                requires_grad=False if device == "cpu" else True,
             )
             for _ in range(3)
         ]
@@ -4266,7 +4267,7 @@ BlockMask(shape=(1,s1,s2048,s2048),ssparsity=46.88%,s
             q, k, v = (
                 torch.randn(1, 12, 1024 + i, 64, device=device) for _ in range(3)
             )
-            block_mask = create_block_mask(doc_mask_mod, None, None, 1024 + i, 1024 + i)
+            block_mask = create_block_mask(doc_mask_mod, None, None, 1024 + i, 1024 + i, device=device)
             torch.compile(flex_attention)(q, k, v, block_mask=block_mask)
 
     @supported_platform
@@ -4331,7 +4332,7 @@ BlockMask(shape=(1,s1,s2048,s2048),ssparsity=46.88%,s
                     8,
                     S,
                     64,
-                    dtype=torch.float16,
+                    dtype=torch.float32 if device == "cpu" else torch.float16,
                     requires_grad=True,
                     device=device,
                 )
