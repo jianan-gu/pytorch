@@ -43,7 +43,7 @@ TEST_ON_CUDA = (
 )
 
 if TEST_ON_CUDA:
-    test_device = "cuda"
+    test_device = ("cuda",)
     test_dtypes = (
         [torch.float32, torch.bfloat16, torch.float16]
         if PLATFORM_SUPPORTS_BF16
@@ -52,7 +52,7 @@ if TEST_ON_CUDA:
     test_dtypes_fast = [torch.float16]
     SKIP_UT_ON_CPU = False
 else:
-    test_device = "cpu"
+    test_device = ("cpu",)
     torch_config_string = torch.__config__.show()
     SKIP_UT_ON_CPU = True
     LONG_COMPILATION_ON_CPU = False
@@ -108,7 +108,7 @@ def _generate_windowed(offset):
 
 
 def _get_windowed_sdpa_mask(Mq, Mkv, offset):
-    return torch.tril(torch.ones(Mkv, Mkv, dtype=torch.bool, device=test_device))[
+    return torch.tril(torch.ones(Mkv, Mkv, dtype=torch.bool, device=test_device[0]))[
         offset : offset + Mq
     ]
 
@@ -163,7 +163,7 @@ def _squared(score, b, h, m, n):
 
 def _head_offset(dtype: torch.dtype):
     """Captured Buffer"""
-    head_offset = torch.rand(Hq, device=test_device, dtype=dtype)
+    head_offset = torch.rand(Hq, device=test_device[0], dtype=dtype)
 
     def score_mod(score, b, h, m, n):
         return score * head_offset[h]
@@ -1930,7 +1930,7 @@ def forward(self, arg0_1, arg1_1, arg2_1, arg3_1, arg4_1):
             self._check_equal(golden_outs, ref_outs, paged_out, fudge_factor, "Out")
 
 
-instantiate_device_type_tests(TestFlexDecoding)
+instantiate_device_type_tests(TestFlexDecoding, globals(), only_for=test_device)
 
 if __name__ == "__main__":
     from torch._inductor.test_case import run_tests

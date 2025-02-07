@@ -109,7 +109,7 @@ TEST_ON_CUDA = (
 )
 
 if TEST_ON_CUDA:
-    test_device = "cuda"
+    test_device = ("cuda",)
     test_dtypes = (
         [torch.float32, torch.bfloat16, torch.float16]
         if PLATFORM_SUPPORTS_BF16
@@ -118,7 +118,7 @@ if TEST_ON_CUDA:
     test_dtypes_fast = [torch.float16]
     SKIP_UT_ON_CPU = False
 else:
-    test_device = "cpu"
+    test_device = ("cpu",)
     torch_config_string = torch.__config__.show()
     # training and some corner cases are not supported on cpu and will be skiped
     SKIP_UT_ON_CPU = True
