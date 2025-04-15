@@ -139,6 +139,10 @@ if(USE_CUDA)
         list(APPEND TORCH_PYTHON_LINK_LIBRARIES torch::cusparselt)
         list(APPEND TORCH_PYTHON_COMPILE_DEFINITIONS USE_CUSPARSELT)
     endif()
+    if(USE_CUFILE)
+        list(APPEND TORCH_PYTHON_LINK_LIBRARIES torch::cufile)
+        list(APPEND TORCH_PYTHON_COMPILE_DEFINITIONS USE_CUFILE)
+    endif()
 
     if(TARGET torch::nvtx3)
       list(APPEND TORCH_PYTHON_LINK_LIBRARIES torch::nvtx3)
@@ -247,6 +251,8 @@ add_custom_command(
       "${TORCH_ROOT}/aten/src/ATen/native/native_functions.yaml"
       "${TORCH_ROOT}/aten/src/ATen/native/tags.yaml"
       "${TORCH_ROOT}/tools/autograd/deprecated.yaml"
+      "${TORCH_ROOT}/torch/_torch_docs.py"
+      "${TORCH_ROOT}/torch/_tensor_docs.py"
       ${pyi_python}
       ${autograd_python}
       ${torchgen_python}
@@ -312,7 +318,6 @@ endif()
 
 add_library(torch_python SHARED ${TORCH_PYTHON_SRCS})
 torch_compile_options(torch_python)  # see cmake/public/utils.cmake
-target_compile_definitions(torch_python PRIVATE -DEXPORT_AOTI_FUNCTIONS)
 if(APPLE)
   target_compile_options(torch_python PRIVATE
       $<$<COMPILE_LANGUAGE:CXX>: -fvisibility=default>)
